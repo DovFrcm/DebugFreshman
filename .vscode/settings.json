@@ -1,0 +1,17 @@
+{
+    "KeilAssistant.MDK.Uv4Path": "F:/Program Files (x86)/keil5/UV4/UV4.exe",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/User"
+    ],
+    "C_Cpp.default.cStandard": "c11",
+    "C_Cpp.default.intelliSenseMode": "gcc-arm",
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "files.trimTrailingWhitespace": true,
+    "search.exclude": {
+        "**/build": true,
+        "**/Objects": true,
+        "**/Listings": true,
+        "**/.tmp-template": true
+    }
+}

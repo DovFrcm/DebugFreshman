@@ -1,0 +1,31 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "ST-Link (OpenOCD)",
+            "cwd": "${workspaceRoot}",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "interface": "swd",
+            "executable": "${workspaceRoot}/build/Debug/oled-menu.elf",
+            "runToMain": true,
+            "device": "STM32F103C8",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32f1x.cfg"
+            ]
+        },
+        {
+            "name": "J-Link",
+            "cwd": "${workspaceRoot}",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "jlink",
+            "interface": "swd",
+            "executable": "${workspaceRoot}/build/Debug/oled-menu.elf",
+            "runToMain": true,
+            "device": "STM32F103C8"
+        }
+    ]
+}

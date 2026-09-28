@@ -1,0 +1,45 @@
+Dependencies for Project '1', Target 'Target 1': (DO NOT MODIFY !)
+F (.\User\main.c)(0x6AB4F7D9)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\main.o --omf_browse .\objects\main.crf --depend .\objects\main.d)
+I (User\board.h)(0x6AB4F866)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+I (User\oled.h)(0x6AB4F810)
+I (User\key.h)(0x6AB4F81E)
+I (User\menu.h)(0x6AB4F81A)
+I (User\app.h)(0x6AB4F7C7)
+I (User\serial.h)(0x6AB4F823)
+F (.\User\app.c)(0x6AB4F816)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\app.o --omf_browse .\objects\app.crf --depend .\objects\app.d)
+I (User\app.h)(0x6AB4F7C7)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+I (User\board.h)(0x6AB4F866)
+I (User\oled.h)(0x6AB4F810)
+I (User\oled_font.h)(0x6AB288BE)
+I (User\menu.h)(0x6AB4F81A)
+I (User\key.h)(0x6AB4F81E)
+I (User\serial.h)(0x6AB4F823)
+F (.\User\menu.c)(0x6AB4F7F1)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\menu.o --omf_browse .\objects\menu.crf --depend .\objects\menu.d)
+I (User\menu.h)(0x6AB4F81A)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+I (User\key.h)(0x6AB4F81E)
+I (User\oled.h)(0x6AB4F810)
+F (.\User\key.c)(0x6AB4F81E)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\key.o --omf_browse .\objects\key.crf --depend .\objects\key.d)
+I (User\key.h)(0x6AB4F81E)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+I (User\board.h)(0x6AB4F866)
+F (.\User\oled.c)(0x6AB4F7E3)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\oled.o --omf_browse .\objects\oled.crf --depend .\objects\oled.d)
+I (User\oled.h)(0x6AB4F810)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+I (User\oled_font.h)(0x6AB288BE)
+I (User\board.h)(0x6AB4F866)
+F (.\User\oled_font.c)(0x6AB288BE)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\oled_font.o --omf_browse .\objects\oled_font.crf --depend .\objects\oled_font.d)
+I (User\oled_font.h)(0x6AB288BE)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+F (.\User\board.c)(0x6AB4F80A)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\board.o --omf_browse .\objects\board.crf --depend .\objects\board.d)
+I (User\board.h)(0x6AB4F866)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+F (.\User\serial.c)(0x6AB4F823)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\serial.o --omf_browse .\objects\serial.crf --depend .\objects\serial.d)
+I (User\serial.h)(0x6AB4F823)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
+I (User\board.h)(0x6AB4F866)
+F (.\keil\startup_stm32f10x_md.s)(0x5825386C)(--cpu Cortex-M3 --pd "__EVAL SETA 1" -g --apcs=interwork -I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"--pd "__UVISION_VERSION SETA 524" --pd "STM32F10X_MD SETA 1"--list .\listings\startup_stm32f10x_md.lst --xref -o .\objects\startup_stm32f10x_md.o --depend .\objects\startup_stm32f10x_md.d)
+F (.\keil\system_init.c)(0x6AB4F90C)(--c99 -c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I .\User-I.\RTE\_Target_1-I"F:\Program Files (x86)\keil5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include"-I"F:\Program Files (x86)\keil5\ARM\CMSIS\Include"-D__UVISION_VERSION="524" -DSTM32F10X_MD-o .\objects\system_init.o --omf_browse .\objects\system_init.crf --depend .\objects\system_init.d)
+I (F:\Program Files (x86)\keil5\ARM\ARMCC\include\stdint.h)(0x588B8344)
