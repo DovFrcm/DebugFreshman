@@ -6,3 +6,5 @@
 .\objects\main.o: User\menu.h
 .\objects\main.o: User\app.h
 .\objects\main.o: User\serial.h
+.\objects\main.o: User\motor.h
+.\objects\main.o: User\track.h

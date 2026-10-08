@@ -220,8 +220,20 @@ int main(void)
     press(KEY_2, "KEY_2");              /* -> extras（菜单项标签，下同） */
     press(KEY_3, "KEY_3");
     expect(Menu_Depth() == 2u, "entered the extras page");
+    dump_screen("extras page (buzzer / backlight / trace cfg / settings / back)");
+
+    /* extras 现在是 5 项：蜂鸣器测试、背光亮度、巡线设置、系统设置、返回。
+       先下去看看新增的"巡线设置"页。 */
     press(KEY_2, "KEY_2");
-    press(KEY_2, "KEY_2");              /* -> settings（settings 页面） */
+    press(KEY_2, "KEY_2");              /* -> 巡线设置 */
+    press(KEY_3, "KEY_3");
+    expect(Menu_Depth() == 3u, "entered the trace-settings page (level 3)");
+    dump_screen("trace settings page (ring / laps / speed / finish-stop / back)");
+    press(KEY_4, "KEY_4");
+    expect(Menu_Depth() == 2u, "back on the extras page");
+
+    /* 再往下走到"系统设置" */
+    press(KEY_2, "KEY_2");              /* -> 系统设置 */
     press(KEY_3, "KEY_3");
     expect(Menu_Depth() == 3u, "entered the settings page (level 3)");
     dump_screen("settings page, level 3");

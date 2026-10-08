@@ -1,10 +1,10 @@
-# Generates oled_font.h / oled_font.c for the SSD1306 menu project.
+﻿# Generates oled_font.h / oled_font.c for the SSD1306 menu project.
 # ASCII glyphs 8x16 from SimSun half-width forms, CJK glyphs 16x16 from SimSun.
 # Output layout is SSD1306 page order (byte = 8 vertical pixels, LSB = top row).
 
 Add-Type -AssemblyName System.Drawing
 
-$OutDir = 'F:\Stm32\User'
+$OutDir = 'F:\Stm32\Project\User'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 # ---------------------------------------------------------------- glyph source
@@ -17,34 +17,47 @@ $Cjk = @(
     @(0x4EAE, 'CN_LIANG',  'liang  = bright'),
     @(0x4F20, 'CN_CHUAN',  'chuan  = transmit'),
     @(0x4FE1, 'CN_XIN',    'xin    = information'),
+    @(0x504F, 'CN_PIAN2',  'pian   = deviate'),
     @(0x505C, 'CN_TING',   'ting   = stop'),
     @(0x5149, 'CN_GUANG',  'guang  = light'),
     @(0x5173, 'CN_GUAN',   'guan   = close / about'),
     @(0x5236, 'CN_ZHI',    'zhi    = make'),
     @(0x529F, 'CN_GONG',   'gong   = function'),
     @(0x52A8, 'CN_DONG',   'dong   = move'),
+    @(0x5341, 'CN_SHI5',   'shi    = ten / cross'),
     @(0x5355, 'CN_DAN',    'dan    = list / sheet'),
+    @(0x53D1, 'CN_FA',     'fa     = start off'),
     @(0x53F7, 'CN_HAO',    'hao    = number'),
     @(0x540D, 'CN_MING2',  'ming   = name'),
     @(0x542F, 'CN_QI',     'qi     = start'),
     @(0x5668, 'CN_QI2',    'qi     = device'),
     @(0x56DE, 'CN_HUI',    'hui    = back'),
+    @(0x5706, 'CN_YUAN',   'yuan   = round'),
+    @(0x5708, 'CN_QUAN',   'quan   = lap / ring'),
     @(0x590D, 'CN_FU',     'fu     = again'),
     @(0x59D3, 'CN_XING2',  'xing   = surname'),
+    @(0x5B57, 'CN_ZI',     'zi     = character'),
     @(0x5B66, 'CN_XUE',    'xue    = study'),
+    @(0x5B8C, 'CN_WAN2',   'wan    = finish'),
+    @(0x5C31, 'CN_JIU',    'jiu    = ready'),
     @(0x5C55, 'CN_ZHAN',   'zhan   = spread'),
     @(0x5DE1, 'CN_XUN',    'xun    = patrol'),
+    @(0x5DEE, 'CN_CHA',    'cha    = difference'),
     @(0x5EA6, 'CN_DU',     'du     = degree / level'),
     @(0x5F00, 'CN_KAI',    'kai    = open / on'),
     @(0x5F0F, 'CN_SHI2',   'shi    = style / type'),
+    @(0x5F2F, 'CN_WAN',    'wan    = bend / turn'),
     @(0x6001, 'CN_TAI',    'tai    = condition'),
     @(0x6062, 'CN_HUI2',   'hui    = restore'),
     @(0x606F, 'CN_XI',     'xi     = breath / news'),
     @(0x611F, 'CN_GAN',    'gan    = sense'),
+    @(0x6210, 'CN_CHENG',  'cheng  = complete'),
     @(0x6253, 'CN_DA',     'da     = hit / open'),
+    @(0x627E, 'CN_ZHAO',   'zhao   = seek'),
     @(0x62D3, 'CN_TUO',    'tuo    = expand'),
     @(0x6309, 'CN_AN',     'an     = press'),
     @(0x63A7, 'CN_KONG',   'kong   = control'),
+    @(0x65AD, 'CN_DUAN',   'duan   = broken'),
     @(0x65F6, 'CN_SHI3',   'shi    = time'),
     @(0x663E, 'CN_XIAN',   'xian   = show'),
     @(0x66FF, 'CN_TI',     'ti     = substitute'),
@@ -59,10 +72,13 @@ $Cjk = @(
     @(0x7247, 'CN_PIAN',   'pian   = piece / chip'),
     @(0x7248, 'CN_BAN',    'ban    = version'),
     @(0x72B6, 'CN_ZHUANG', 'zhuang = state'),
+    @(0x73AF, 'CN_HUAN',   'huan   = ring'),
+    @(0x7528, 'CN_YONG',   'yong   = use'),
     @(0x793A, 'CN_SHI',    'shi    = show'),
     @(0x7CFB, 'CN_XI2',    'xi     = system'),
     @(0x7EBF, 'CN_XIAN2',  'xian   = line'),
     @(0x7EDF, 'CN_TONG',   'tong   = whole'),
+    @(0x7EEA, 'CN_XU',     'xu     = order / ready'),
     @(0x7F6E, 'CN_ZHI3',   'zhi    = place / set'),
     @(0x80CC, 'CN_BEI',    'bei    = back'),
     @(0x80FD, 'CN_NENG',   'neng   = ability'),
@@ -73,8 +89,11 @@ $Cjk = @(
     @(0x8BA4, 'CN_REN',    'ren    = recognise'),
     @(0x8BBE, 'CN_SHE',    'she    = set up'),
     @(0x8BD5, 'CN_SHI4',   'shi    = try / test'),
+    @(0x8F66, 'CN_CHE',    'che    = car'),
+    @(0x8F6C, 'CN_ZHUAN',  'zhuan  = turn'),
     @(0x8FD0, 'CN_YUN',    'yun    = run'),
     @(0x8FD4, 'CN_FAN',    'fan    = return'),
+    @(0x901F, 'CN_SU',     'su     = speed'),
     @(0x952E, 'CN_JIAN2',  'jian   = key'),
     @(0x95EA, 'CN_SHAN',   'shan   = flash'),
     @(0x95ED, 'CN_BI',     'bi     = close'),
@@ -308,7 +327,7 @@ for ($i = 0; $i -lt $Cjk.Count; $i++) {
 
 Set-Content -Path (Join-Path $OutDir 'oled_font.c') -Value $sb.ToString() -Encoding ASCII
 
-Set-Content -Path 'F:\Stm32\tools\font-preview.txt' -Value $preview.ToString() -Encoding ASCII
+Set-Content -Path 'F:\Stm32\Project\tools\font-preview.txt' -Value $preview.ToString() -Encoding ASCII
 
 Write-Output ("CJK glyphs: {0}  ASCII glyphs: {1}" -f $Cjk.Count, $ascBytes.Count)
 if ($cjkWarn.Count -gt 0) { Write-Output ("BLANK CJK GLYPHS: " + ($cjkWarn -join ', ')) } else { Write-Output 'no blank CJK glyphs' }

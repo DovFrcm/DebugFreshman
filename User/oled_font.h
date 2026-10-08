@@ -20,7 +20,7 @@
 #define FONT_ASCII_FIRST  0x20u
 #define FONT_ASCII_LAST   0x7Eu
 #define FONT_ASCII_COUNT  95u
-#define FONT_CJK_COUNT    71u
+#define FONT_CJK_COUNT    90u
 
 /* Unicode code points of every CJK glyph in the table */
 #define CN_ZHU     0x4E3Bu   /* zhu    = main / host */
@@ -29,34 +29,47 @@
 #define CN_LIANG   0x4EAEu   /* liang  = bright */
 #define CN_CHUAN   0x4F20u   /* chuan  = transmit */
 #define CN_XIN     0x4FE1u   /* xin    = information */
+#define CN_PIAN2   0x504Fu   /* pian   = deviate */
 #define CN_TING    0x505Cu   /* ting   = stop */
 #define CN_GUANG   0x5149u   /* guang  = light */
 #define CN_GUAN    0x5173u   /* guan   = close / about */
 #define CN_ZHI     0x5236u   /* zhi    = make */
 #define CN_GONG    0x529Fu   /* gong   = function */
 #define CN_DONG    0x52A8u   /* dong   = move */
+#define CN_SHI5    0x5341u   /* shi    = ten / cross */
 #define CN_DAN     0x5355u   /* dan    = list / sheet */
+#define CN_FA      0x53D1u   /* fa     = start off */
 #define CN_HAO     0x53F7u   /* hao    = number */
 #define CN_MING2   0x540Du   /* ming   = name */
 #define CN_QI      0x542Fu   /* qi     = start */
 #define CN_QI2     0x5668u   /* qi     = device */
 #define CN_HUI     0x56DEu   /* hui    = back */
+#define CN_YUAN    0x5706u   /* yuan   = round */
+#define CN_QUAN    0x5708u   /* quan   = lap / ring */
 #define CN_FU      0x590Du   /* fu     = again */
 #define CN_XING2   0x59D3u   /* xing   = surname */
+#define CN_ZI      0x5B57u   /* zi     = character */
 #define CN_XUE     0x5B66u   /* xue    = study */
+#define CN_WAN2    0x5B8Cu   /* wan    = finish */
+#define CN_JIU     0x5C31u   /* jiu    = ready */
 #define CN_ZHAN    0x5C55u   /* zhan   = spread */
 #define CN_XUN     0x5DE1u   /* xun    = patrol */
+#define CN_CHA     0x5DEEu   /* cha    = difference */
 #define CN_DU      0x5EA6u   /* du     = degree / level */
 #define CN_KAI     0x5F00u   /* kai    = open / on */
 #define CN_SHI2    0x5F0Fu   /* shi    = style / type */
+#define CN_WAN     0x5F2Fu   /* wan    = bend / turn */
 #define CN_TAI     0x6001u   /* tai    = condition */
 #define CN_HUI2    0x6062u   /* hui    = restore */
 #define CN_XI      0x606Fu   /* xi     = breath / news */
 #define CN_GAN     0x611Fu   /* gan    = sense */
+#define CN_CHENG   0x6210u   /* cheng  = complete */
 #define CN_DA      0x6253u   /* da     = hit / open */
+#define CN_ZHAO    0x627Eu   /* zhao   = seek */
 #define CN_TUO     0x62D3u   /* tuo    = expand */
 #define CN_AN      0x6309u   /* an     = press */
 #define CN_KONG    0x63A7u   /* kong   = control */
+#define CN_DUAN    0x65ADu   /* duan   = broken */
 #define CN_SHI3    0x65F6u   /* shi    = time */
 #define CN_XIAN    0x663Eu   /* xian   = show */
 #define CN_TI      0x66FFu   /* ti     = substitute */
@@ -71,10 +84,13 @@
 #define CN_PIAN    0x7247u   /* pian   = piece / chip */
 #define CN_BAN     0x7248u   /* ban    = version */
 #define CN_ZHUANG  0x72B6u   /* zhuang = state */
+#define CN_HUAN    0x73AFu   /* huan   = ring */
+#define CN_YONG    0x7528u   /* yong   = use */
 #define CN_SHI     0x793Au   /* shi    = show */
 #define CN_XI2     0x7CFBu   /* xi     = system */
 #define CN_XIAN2   0x7EBFu   /* xian   = line */
 #define CN_TONG    0x7EDFu   /* tong   = whole */
+#define CN_XU      0x7EEAu   /* xu     = order / ready */
 #define CN_ZHI3    0x7F6Eu   /* zhi    = place / set */
 #define CN_BEI     0x80CCu   /* bei    = back */
 #define CN_NENG    0x80FDu   /* neng   = ability */
@@ -85,8 +101,11 @@
 #define CN_REN     0x8BA4u   /* ren    = recognise */
 #define CN_SHE     0x8BBEu   /* she    = set up */
 #define CN_SHI4    0x8BD5u   /* shi    = try / test */
+#define CN_CHE     0x8F66u   /* che    = car */
+#define CN_ZHUAN   0x8F6Cu   /* zhuan  = turn */
 #define CN_YUN     0x8FD0u   /* yun    = run */
 #define CN_FAN     0x8FD4u   /* fan    = return */
+#define CN_SU      0x901Fu   /* su     = speed */
 #define CN_JIAN2   0x952Eu   /* jian   = key */
 #define CN_SHAN    0x95EAu   /* shan   = flash */
 #define CN_BI      0x95EDu   /* bi     = close */

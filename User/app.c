@@ -24,6 +24,8 @@
 #include "oled_font.h"
 #include "menu.h"
 #include "serial.h"
+#include "track.h"
+#include "motor.h"
 
 /* ------------------------------------------------------------------ */
 /* 你自己的信息，会显示在 Information（信息）页面上                      */
@@ -68,9 +70,27 @@ static const uint16_t T_CLOCK[]      = { CN_ZHU, CN_PIN, 0 };
 static const uint16_t T_UPTIME[]     = { CN_YUN, CN_XING, 0 };
 
 /* 循迹页面 */
-static const uint16_t T_TRACE_GO[]   = { CN_QI, CN_DONG, CN_XUN, CN_XIAN2, 0 };
-static const uint16_t T_TRACE_STOP[] = { CN_TING, CN_ZHI2, CN_XUN, CN_XIAN2, 0 };
-static const uint16_t T_STATE[]      = { CN_ZHUANG, CN_TAI, 0 };
+/* 巡线控制面板（题目 4 的主界面）。
+   注意标题不能叫 T_TRACE —— 上面主菜单那一项已经占了这个名字。 */
+static const uint16_t T_TRACE_TITLE[] = { CN_XUN, CN_XIAN2, 0 };         /* 巡线 */
+static const uint16_t T_S1[]         = { 'S', '1', 0 };
+static const uint16_t T_S2[]         = { 'S', '2', 0 };
+static const uint16_t T_S3[]         = { 'S', '3', 0 };
+static const uint16_t T_S4[]         = { 'S', '4', 0 };
+static const uint16_t T_ELAPSED[]    = { CN_YONG, CN_SHI3, 0 };         /* 用时 */
+static const uint16_t T_SPEED[]      = { CN_SU, 0 };                    /* 速   */
+static const uint16_t T_LAP[]        = { CN_QUAN, 0 };                  /* 圈   */
+static const uint16_t T_KEY_GO[]     = { 'K','1', CN_QI, CN_TING, 0 };  /* K1启停 */
+static const uint16_t T_KEY_BACK[]   = { 'K','4', CN_FAN, CN_HUI, 0 };  /* K4返回 */
+
+/* 巡线设置页：用到的汉字都在字库里 */
+static const uint16_t T_TRACE_CFG[]  = { CN_XUN, CN_XIAN2, CN_SHE, CN_ZHI3, 0 };  /* 巡线设置 */
+static const uint16_t T_RING[]       = { CN_YUAN, CN_HUAN, 0 };                   /* 圆环   */
+static const uint16_t T_LAPS_ITEM[]  = { CN_QUAN, CN_DU, 0 };                     /* 圈数   */
+static const uint16_t T_FIN_STOP[]   = { CN_WAN2, CN_CHENG, CN_TING, CN_CHE, 0 }; /* 完成停车 */
+static const uint16_t T_SPEED_ITEM[] = { CN_SU, CN_DU, 0 };                       /* 速度   */
+static const uint16_t V_ON[]         = { CN_KAI, 0 };                             /* 开     */
+static const uint16_t V_OFF[]        = { CN_GUAN, 0 };                            /* 关     */
 
 /* 扩展功能页 */
 static const uint16_t T_BUZZER[]     = { CN_FENG, CN_MING, CN_QI2, CN_CE, CN_SHI4, 0 };
@@ -85,8 +105,6 @@ static const uint16_t T_RESTORE[]    = { CN_HUI2, CN_FU, CN_MO2, CN_REN, 0 };
 static const uint16_t T_CHIP_NAME[]  = { 'S','T','M','3','2','F','1','0','3','C','8', 0 };
 
 /* 直接当作“值”来显示的字符串 */
-static const uint16_t V_RUN[]        = { 'R', 'U', 'N', 0 };
-static const uint16_t V_STOP[]       = { 'S', 'T', 'O', 'P', 0 };
 static const uint16_t V_VERSION[]    = { 'V', '1', '.', '0', 0 };
 
 /* ------------------------------------------------------------------ */
@@ -119,7 +137,6 @@ static uint8_t  s_led1On;       /* 实际驱动出去的电平，存下来是为
 static uint8_t  s_led2On;       /* 保证屏幕显示的和灯的真实状态永远一致   */
 
 static uint8_t  s_brightness;
-static uint8_t  s_traceRun;
 static uint8_t  s_buzzerCount;
 
 /* ---- 上位机可以读写的变量 a（题目要求 3） ---- */
@@ -152,11 +169,6 @@ static uint16_t s_bufBuzzer[8];
 static uint8_t AppendU32(uint16_t *dst, uint8_t pos, uint32_t value)
 {
     return (uint8_t)(pos + OLED_FormatU32(&dst[pos], value));
-}
-
-static const uint16_t *Val_TraceState(void)
-{
-    return (s_traceRun != 0u) ? V_RUN : V_STOP;
 }
 
 static const uint16_t *Val_Clock(void)
@@ -332,6 +344,169 @@ static void Link_SendValue(void)
     Serial_WriteByte((uint8_t)'\n');
 }
 
+/* ------------------------------------------------------------------ */
+/* 巡线相关的串口命令                                                  */
+/*                                                                     */
+/* 调车的时候人蹲在赛道边，车却在几百米外的电脑上跑，这套命令就是给这种   */
+/* 场景用的：不用重新编译烧录，插上 USB-TTL 就能发车、停车、看传感器状态。 */
+/*                                                                     */
+/*   上位机发        单片机行为                    回复                 */
+/*   ------------    --------------------------    ------------------  */
+/*   TRACK           发车（等同于按 K1）            无                  */
+/*   TRACK STOP      停车                           无                  */
+/*   SENSORS         读四路传感器状态               S=0110              */
+/*   STATUS          把状态打包发回来               ST=RUN S=0110 ...   */
+/*   RING ON/OFF     开关圆环识别                   RING=ON / RING=OFF  */
+/*   LINE ON/OFF     开关起跑线计圈                 LINE=ON / LINE=OFF  */
+/*   LAPS 2          设圈数                         LAPS=2              */
+/*   SPEED 2000      设基础速度（原始 PWM 值）      SPEED=2000          */
+/*                                                                     */
+/* 解析时忽略大小写和空格，所以 track stop、TRACKSTOP、Track Stop 都认。 */
+/* ------------------------------------------------------------------ */
+
+static const char *SkipSpace(const char *p)
+{
+    while ((*p == ' ') || (*p == '\t')) {
+        p++;
+    }
+    return p;
+}
+
+static char ToUpper(char c)
+{
+    if ((c >= 'a') && (c <= 'z')) {
+        return (char)(c - 'a' + 'A');
+    }
+    return c;
+}
+
+/* line 是不是以 word 开头（忽略大小写和空格）？
+   是的话返回 word 之后剩余部分的指针，不是就返回 0。 */
+static const char *CmdMatch(const char *line, const char *word)
+{
+    const char *p = line;
+
+    while (*word != '\0') {
+        p = SkipSpace(p);
+        if (ToUpper(*p) != *word) {
+            return 0;
+        }
+        p++;
+        word++;
+    }
+
+    return p;
+}
+
+/* 回复 "名称=值\r\n"，比如 "LAPS=2" */
+static void Link_SendInt(const char *name, int32_t value)
+{
+    uint16_t buf[16];
+    uint8_t  n = FormatI32(buf, value);
+    uint8_t  i;
+
+    Serial_WriteString(name);
+    Serial_WriteByte((uint8_t)'=');
+    for (i = 0u; i < n; i++) {
+        Serial_WriteByte((uint8_t)buf[i]);
+    }
+    Serial_WriteString("\r\n");
+}
+
+/* 回复 "名称=ON" / "名称=OFF" */
+static void Link_SendOnOff(const char *name, uint8_t on)
+{
+    Serial_WriteString(name);
+    Serial_WriteString((on != 0u) ? "=ON\r\n" : "=OFF\r\n");
+}
+
+/* 返回 1 表示这一行已经被当成命令处理掉了 */
+static uint8_t Link_HandleCommand(void)
+{
+    const char *rest;
+    int32_t v;
+
+    /* ---- TRACK [STOP]：发车 / 停车 ---- */
+    rest = CmdMatch(s_line, "TRACK");
+    if (rest != 0) {
+        if (CmdMatch(rest, "STOP") != 0) {
+            Track_Stop();
+        } else {
+            Track_Start();
+        }
+        return 1u;
+    }
+
+    /* ---- SENSORS：只要四路传感器的状态 ---- */
+    rest = CmdMatch(s_line, "SENSORS");
+    if (rest != 0) {
+        Serial_WriteString("S=");
+        Serial_WriteString(Track_BitsText());
+        Serial_WriteString("\r\n");
+        return 1u;
+    }
+
+    /* ---- STATUS：一次把所有关心的量都发回来，调参时最常用 ---- */
+    rest = CmdMatch(s_line, "STATUS");
+    if (rest != 0) {
+        Serial_WriteString("ST=");
+        Serial_WriteString(Track_StateTag());
+        Serial_WriteString(" S=");
+        Serial_WriteString(Track_BitsText());
+        Link_SendInt(" E", (int32_t)Track_Error());
+        Link_SendInt("SPD", (int32_t)Track_GetBaseSpeed());
+        Link_SendInt("LAP", (int32_t)Track_LapIndex());
+        Link_SendInt("MS", (int32_t)Track_ElapsedMs());
+        return 1u;
+    }
+
+    /* ---- RING ON / RING OFF：圆环识别总开关 ---- */
+    rest = CmdMatch(s_line, "RING");
+    if (rest != 0) {
+        if (CmdMatch(rest, "OFF") != 0) {
+            Track_SetRingEnable(0u);
+        } else if (CmdMatch(rest, "ON") != 0) {
+            Track_SetRingEnable(1u);
+        }
+        Link_SendOnOff("RING", Track_GetRingEnable());
+        return 1u;
+    }
+
+    /* ---- LINE ON / LINE OFF：起跑线(四路全黑)计圈开关 ---- */
+    rest = CmdMatch(s_line, "LINE");
+    if (rest != 0) {
+        if (CmdMatch(rest, "OFF") != 0) {
+            Track_SetLineMark(0u);
+        } else if (CmdMatch(rest, "ON") != 0) {
+            Track_SetLineMark(1u);
+        }
+        Link_SendOnOff("LINE", Track_GetLineMark());
+        return 1u;
+    }
+
+    /* ---- LAPS n：圈数（1 或 2，题目 4b / 4c） ---- */
+    rest = CmdMatch(s_line, "LAPS");
+    if (rest != 0) {
+        if (Link_ParseI32(rest, &v) != 0u) {
+            Track_SetLaps((uint8_t)v);
+        }
+        Link_SendInt("LAPS", (int32_t)Track_GetLaps());
+        return 1u;
+    }
+
+    /* ---- SPEED n：基础速度，原始 PWM 值（0..7199） ---- */
+    rest = CmdMatch(s_line, "SPEED");
+    if (rest != 0) {
+        if (Link_ParseI32(rest, &v) != 0u) {
+            Track_SetBaseSpeed((uint16_t)v);
+        }
+        Link_SendInt("SPD", (int32_t)Track_GetBaseSpeed());
+        return 1u;
+    }
+
+    return 0u;
+}
+
 static void Link_ProcessLine(void)
 {
     int32_t value;
@@ -339,6 +514,13 @@ static void Link_ProcessLine(void)
     s_line[s_lineLen] = '\0';
 
     if (s_lineLen != 0u) {
+        /* 先看是不是"命令"（TRACK/SENSORS/... 见上面的说明）。
+           是命令就地处理掉，不再往下走数字解析。 */
+        if (Link_HandleCommand() != 0u) {
+            s_lineLen = 0u;
+            return;
+        }
+
         if (Link_ParseI32(s_line, &value) != 0u) {
             if (value != s_varA) {
                 s_varA = value;
@@ -561,21 +743,244 @@ static const MenuPageOps kLedPageOps = {
     LedPage_Leave
 };
 
-static void Act_TraceStart(void)
+/* ------------------------------------------------------------------
+ * 巡线控制面板（题目 4）
+ *
+ * 这是本题的主界面，和 LED 页一样是"控制面板"而不是列表菜单。
+ * 屏幕上必须实时显示全部四路循迹传感器的状态（题目 4a），
+ * 发车后还要显示本圈用时（题目 4b）。
+ *
+ *   K1 : 发车 / 停车
+ *   K2 : 圈数 1 <-> 2（未发车时才能改）
+ *   K3 : 基础速度 慢/中/快 循环（未发车时才能改）
+ *   K4 : 返回主菜单，同时停车（长按同样有效）
+ *
+ * 屏幕分四行：
+ *   第 0 行  巡线 <状态>                    圈 1/2
+ *   第 2 行  S1[■] S2[□] S3[■] S4[□]      ← 四路传感器实时状态
+ *   第 4 行  用时 12.3s              速 1800
+ *   第 6 行  K1启停  K4返回
+ * ------------------------------------------------------------------ */
+
+/* 画一个 10 x 14 的传感器指示框：空心 = 没压线，实心 = 压到黑线。
+   实心和空心差别足够大，考核的人站在一米外也能一眼看出是哪一路在变。 */
+static void TracePage_DrawSensorBox(uint8_t x, uint8_t page, uint8_t filled)
 {
-    s_traceRun = 1u;
+    uint8_t top = (uint8_t)(page * 8u + 1u);
+    uint8_t bottom = (uint8_t)(page * 8u + 14u);
+    uint8_t r;
+    uint8_t c;
+
+    /* 外框 */
+    for (c = 0u; c < 10u; c++) {
+        OLED_DrawPixel((uint8_t)(x + c), top, 1u);
+        OLED_DrawPixel((uint8_t)(x + c), bottom, 1u);
+    }
+    for (r = 1u; r <= 14u; r++) {
+        OLED_DrawPixel(x, (uint8_t)(page * 8u + r), 1u);
+        OLED_DrawPixel((uint8_t)(x + 9u), (uint8_t)(page * 8u + r), 1u);
+    }
+
+    /* 内部填实 */
+    if (filled != 0u) {
+        for (r = 2u; r < 14u; r++) {
+            for (c = 1u; c < 9u; c++) {
+                OLED_DrawPixel((uint8_t)(x + c), (uint8_t)(page * 8u + r), 1u);
+            }
+        }
+    }
 }
 
-static void Act_TraceStop(void)
+/* 把毫秒格式化成 "12.3s"。巡线一圈也就几十秒，
+   一位小数足够看出差别，字符数也最少。 */
+static const uint16_t *Val_TrackTime(void)
 {
-    s_traceRun = 0u;
+    static uint16_t buf[12];
+    uint32_t tenths = Track_ElapsedMs() / 100u;
+    uint8_t  p = AppendU32(buf, 0u, tenths / 10u);
+
+    buf[p] = (uint16_t)'.'; p++;
+    buf[p] = (uint16_t)('0' + (tenths % 10u)); p++;
+    buf[p] = (uint16_t)'s'; p++;
+    buf[p] = 0u;
+
+    return buf;
 }
 
+static const uint16_t *Val_TrackSpeed(void)
+{
+    static uint16_t buf[8];
+    uint8_t p = AppendU32(buf, 0u, (uint32_t)Track_GetBaseSpeed());
+
+    buf[p] = 0u;
+
+    return buf;
+}
+
+static const uint16_t *Val_TrackLap(void)
+{
+    static uint16_t buf[8];
+    uint8_t p = 0u;
+
+    p = AppendU32(buf, p, (uint32_t)Track_LapIndex());
+    buf[p] = (uint16_t)'/'; p++;
+    p = AppendU32(buf, p, (uint32_t)Track_GetLaps());
+    buf[p] = 0u;
+
+    return buf;
+}
+
+static void TracePage_Key(KeyEvent event)
+{
+    switch (event) {
+    case KEY_1:
+        /* 发车 / 停车。这是题目 4b 要求的"按下对应按键发车" */
+        if (Track_IsRunning() != 0u) {
+            Track_Stop();
+        } else {
+            Track_Start();
+        }
+        Menu_Invalidate();
+        break;
+
+    case KEY_2:
+        /* 圈数 1 <-> 2（题目 4b 一圈 / 4c 两圈）。
+           跑起来之后不让改，免得跑一半改了圈数逻辑对不上。 */
+        if (Track_IsRunning() == 0u) {
+            Track_CycleLaps();
+            Menu_Invalidate();
+        }
+        break;
+
+    case KEY_3:
+        /* 基础速度循环：慢 -> 中 -> 快 -> 慢。现场调车最常用的一个参数，
+           放到按键上就不用为了改速度重新编译烧录。 */
+        if (Track_IsRunning() == 0u) {
+            Track_CycleSpeed();
+            Menu_Invalidate();
+        }
+        break;
+
+    case KEY_4:
+    case KEY_4_LONG:
+        /* 返回。退出前一定停车 —— 不能留着一辆自己跑的车 */
+        Menu_Back();
+        break;
+
+    default:
+        break;
+    }
+}
+
+static void TracePage_Draw(void)
+{
+    uint8_t mask = Track_ReadStable();
+    uint8_t lapW;
+    uint8_t spdW;
+    uint8_t i;
+
+    /* 第 0 行：标题 + 运行状态 */
+    OLED_DrawText(0u, 0u, T_TRACE_TITLE);
+    OLED_DrawText(40u, 0u, Track_StateText());
+
+    /* 第 0 行右侧："圈 1/2"。先量出数值的宽度，再把标签摆在它左边留 4 像素
+       间隙，这样两者整体右对齐，值变成两位数时也不会挤到一起。 */
+    lapW = OLED_TextWidth(Val_TrackLap());
+    OLED_DrawTextRight(126u, 0u, Val_TrackLap());
+    OLED_DrawTextRight((uint8_t)(126u - lapW - 4u), 0u, T_LAP);
+
+    /* 第 2 行：四路传感器。bit0 = S1(最左) .. bit3 = S4(最右)，
+       和屏幕上从左到右的顺序一致，对着传感器排就能核对。 */
+    for (i = 0u; i < 4u; i++) {
+        uint8_t sx = (uint8_t)(2u + (i * 32u));
+        uint8_t filled = (uint8_t)(((mask & (uint8_t)(1u << i)) != 0u) ? 1u : 0u);
+
+        switch (i) {
+        case 0u:  OLED_DrawText(sx, 2u, T_S1); break;
+        case 1u:  OLED_DrawText(sx, 2u, T_S2); break;
+        case 2u:  OLED_DrawText(sx, 2u, T_S3); break;
+        default:  OLED_DrawText(sx, 2u, T_S4); break;
+        }
+
+        TracePage_DrawSensorBox((uint8_t)(sx + 17u), 2u, filled);
+    }
+
+    /* 第 4 行：用时（题目 4b 要求在屏幕上显示本圈用时） + 当前速度 */
+    OLED_DrawText(0u, 4u, T_ELAPSED);
+    OLED_DrawText((uint8_t)(OLED_TextWidth(T_ELAPSED) + 4u), 4u, Val_TrackTime());
+
+    spdW = OLED_TextWidth(Val_TrackSpeed());
+    OLED_DrawTextRight(126u, 4u, Val_TrackSpeed());
+    OLED_DrawTextRight((uint8_t)(126u - spdW - 4u), 4u, T_SPEED);
+
+    /* 第 6 行：按键提示 */
+    OLED_DrawText(0u, 6u, T_KEY_GO);
+    OLED_DrawText(64u, 6u, T_KEY_BACK);
+}
+
+/* 离开这一页时无条件停车。不管是按 K4 正常返回，还是长按 K4 跳回主菜单，
+   都会走到这里 —— 保证不会留着一辆没人管的、自己跑着的车。 */
+static void TracePage_Leave(void)
+{
+    Track_Stop();
+}
+
+static const MenuPageOps kTracePageOps = {
+    TracePage_Key,
+    TracePage_Draw,
+    TracePage_Leave
+};
+
+/* ------------------------------------------------------------------ */
+/* 巡线设置页：放几个必须现场调、又不适合占用主界面按键的参数          */
+/* ------------------------------------------------------------------ */
+
+static const uint16_t *Val_RingOn(void)
+{
+    return (Track_GetRingEnable() != 0u) ? V_ON : V_OFF;
+}
+
+static const uint16_t *Val_FinishStop(void)
+{
+    return (Track_GetFinishStop() != 0u) ? V_ON : V_OFF;
+}
+
+static const uint16_t *Val_SpeedLevel(void)
+{
+    return Val_TrackSpeed();
+}
+
+static void Act_ToggleRing(void)
+{
+    Track_SetRingEnable((uint8_t)(Track_GetRingEnable() == 0u));
+}
+
+static void Act_ToggleFinishStop(void)
+{
+    Track_SetFinishStop((uint8_t)(Track_GetFinishStop() == 0u));
+}
+
+/* 速度和圈数都用 track.c 里的那对函数，保证和巡线页按 K2/K3 的效果一模一样。
+   早先这两处各写了一份判断，改速度档位的判断条件时很容易只改一边。 */
+static void Act_CycleSpeed(void)
+{
+    Track_CycleSpeed();
+}
+
+static void Act_CycleLaps(void)
+{
+    Track_CycleLaps();
+}
+
+/* 底板上现在真的接了蜂鸣器（PB3，有源蜂鸣器），所以这一项是"按一下响一声"。
+   响的时长取 120 ms：足够听清楚，又不至于让按住按键的人等得不耐烦。 */
 static void Act_Buzzer(void)
 {
-    /* 底板上没有接蜂鸣器，所以这里只是把“被触发过几次”记下来。
-       等蜂鸣器接上去之后，把这个计数换成真正的驱动代码即可 */
     s_buzzerCount++;
+
+    Board_BeepWrite(1u);
+    Delay_Ms(120u);
+    Board_BeepWrite(0u);
 }
 
 /* 每按一次背光就在 4 个档位之间循环：加 1 之后对档位总数取模，
@@ -590,9 +995,15 @@ static void Act_Brightness(void)
    不能只改变量等着下次重画 */
 static void Act_RestoreDefaults(void)
 {
-    s_traceRun = 0u;
     s_buzzerCount = 0u;
     s_brightness = DEFAULT_BRIGHTNESS;
+
+    Track_Stop();
+    Track_SetLaps(1u);
+    Track_SetBaseSpeed(1800u);
+    Track_SetRingEnable(1u);
+    Track_SetLineMark(1u);
+    Track_SetFinishStop(1u);
 
     Led_SetMode(LED_MODE_OFF);
     OLED_SetContrast(s_contrast[s_brightness]);
@@ -609,13 +1020,24 @@ static const MenuItem kSettingsItems[] = {
 };
 static const MenuPage kSettingsPage = { kSettingsItems, 3u, 0 };
 
+/* 巡线设置：几个必须现场调、又不适合占用巡线页按键的参数都放这里 */
+static const MenuItem kTraceCfgItems[] = {
+    { T_RING,      0, Act_ToggleRing,       Val_RingOn     },
+    { T_LAPS_ITEM, 0, Act_CycleLaps,        Val_TrackLap   },
+    { T_SPEED_ITEM,0, Act_CycleSpeed,       Val_SpeedLevel },
+    { T_FIN_STOP,  0, Act_ToggleFinishStop, Val_FinishStop },
+    { T_BACK,      0, Menu_Back,            0              }
+};
+static const MenuPage kTraceCfgPage = { kTraceCfgItems, 5u, 0 };
+
 static const MenuItem kExtraItems[] = {
     { T_BUZZER,    0,              Act_Buzzer,       Val_Buzzer     },
     { T_BACKLIGHT, 0,              Act_Brightness,   Val_Brightness },
+    { T_TRACE_CFG, &kTraceCfgPage, 0,                0              },
     { T_SETTINGS,  &kSettingsPage, 0,                0              },
     { T_BACK,      0,              Menu_Back,        0              }
 };
-static const MenuPage kExtraPage = { kExtraItems, 4u, 0 };
+static const MenuPage kExtraPage = { kExtraItems, 5u, 0 };
 
 static const MenuItem kLedItems[] = {
     { 0, 0, 0, 0 }              /* 用不到：这一页是控制面板，不走菜单项 */
@@ -627,13 +1049,12 @@ static const MenuItem kInfoItems[] = {
 };
 static const MenuPage kInfoPage = { kInfoItems, 0u, &kInfoPageOps };
 
+/* 巡线页也是控制面板：一页里同时做"实时显示四路传感器"和"按键发车"，
+   这正是题目 4a/4b 要看的两件事，分成两个列表项反而没法同时看到。 */
 static const MenuItem kTraceItems[] = {
-    { T_TRACE_GO,   0, Act_TraceStart, 0              },
-    { T_TRACE_STOP, 0, Act_TraceStop,  0              },
-    { T_STATE,      0, 0,              Val_TraceState },
-    { T_BACK,       0, Menu_Back,      0              }
+    { 0, 0, 0, 0 }              /* 用不到：这一页是控制面板，不走菜单项 */
 };
-static const MenuPage kTracePage = { kTraceItems, 4u, 0 };
+static const MenuPage kTracePage = { kTraceItems, 0u, &kTracePageOps };
 
 static const MenuItem kAboutItems[] = {
     { T_CHIP_NAME, 0, 0,         0          },
@@ -658,7 +1079,6 @@ static const MenuPage kMainPage = { kMainItems, 5u, 0 };
 
 void App_Init(void)
 {
-    s_traceRun = 0u;
     s_buzzerCount = 0u;
     s_brightness = DEFAULT_BRIGHTNESS;
 
@@ -688,6 +1108,10 @@ int32_t App_GetVarA(void)
 
 void App_Tick(void)
 {
+    /* 循迹控制器。每一轮主循环都要跑：它自己按 2 ms 限频，
+       没发车的时候只更新传感器、不动电机。 */
+    Track_Tick();
+
     /* 不管当前在哪一页，每一轮都要把上位机串口来的数据处理掉 */
     Link_Poll();
 
