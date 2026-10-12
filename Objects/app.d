@@ -1,6 +1,6 @@
 .\objects\app.o: User\app.c
 .\objects\app.o: User\app.h
-.\objects\app.o: F:\Program Files (x86)\keil5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\app.o: D:\Keil5\ARM\ARMCC\Bin\..\include\stdint.h
 .\objects\app.o: User\board.h
 .\objects\app.o: User\oled.h
 .\objects\app.o: User\oled_font.h
