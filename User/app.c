@@ -1003,7 +1003,7 @@ static void Act_RestoreDefaults(void)
     Track_SetBaseSpeed(1800u);
     Track_SetRingEnable(1u);
     Track_SetLineMark(1u);
-    Track_SetFinishStop(1u);
+    Track_SetFinishStop(0u);    /* 和 Track_Init() 一致：默认不停车，一直跑 */
 
     Led_SetMode(LED_MODE_OFF);
     OLED_SetContrast(s_contrast[s_brightness]);

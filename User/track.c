@@ -47,13 +47,17 @@
 #define TRACK_D_FILTER_DEN      (1u << TRACK_D_FILTER_SHIFT)
 
 /* 基础速度（原始 PWM 值，满量程 MOTOR_PWM_MAX = 7199）。
-   1800 大约是 25% 占空比，是"能跑得起来又刹得住"的起点。
-   下面这张表是巡线页按 K3 能现场切的四个档位，不用重新编译烧录。 */
-#define TRACK_SPEED_DEFAULT     1800u
-#define TRACK_SPEED_MIN         900u
+   当前调成"慢速"：900 大约 12.5% 占空比，方便盯着屏幕看传感器和
+   状态的变化，出问题也来得及反应。
+   （先前试过 700，太接近这类减速电机的起步下限，容易起步发抖/原地不动，
+   所以抬到 900。再慢就要先确认车还能不能动。）
+   下面这张表是巡线页按 K3 能现场切的四个档位，不用重新编译烧录。
+   默认值一定要是表里的一项，否则第一次按 K3 会直接跳到表头那一档。 */
+#define TRACK_SPEED_DEFAULT     900u
+#define TRACK_SPEED_MIN         400u
 #define TRACK_SPEED_MAX         3600u
 
-static const uint16_t s_speedLevels[] = { 1200u, 1800u, 2400u, 3000u };
+static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 #define TRACK_SPEED_LEVELS      (sizeof(s_speedLevels) / sizeof(s_speedLevels[0]))
 
 /* 内轮允许的最大反转量。直角弯、折线要靠它原地转过去。
@@ -854,5 +858,7 @@ void Track_Init(void)
     s_baseSpeed  = TRACK_SPEED_DEFAULT;
     s_ringEnable = 1u;
     s_lineMark   = 1u;
-    s_finishStop = 1u;
+    /* 上电默认"完成不停车"：圈数只用来计时和报圈，不会把车停下来，
+       所以一按发车就会一直跑下去。菜单里的"完成停车"仍然能改回开。 */
+    s_finishStop = 0u;
 }

@@ -1259,7 +1259,7 @@ Image Symbol Table
     Track_GetLaps                            0x080021b9   Thumb Code     6  track.o(i.Track_GetLaps)
     Track_GetLineMark                        0x080021c5   Thumb Code     6  track.o(i.Track_GetLineMark)
     Track_GetRingEnable                      0x080021d1   Thumb Code     6  track.o(i.Track_GetRingEnable)
-    Track_Init                               0x080021dd   Thumb Code   154  track.o(i.Track_Init)
+    Track_Init                               0x080021dd   Thumb Code   156  track.o(i.Track_Init)
     Track_IsRunning                          0x080022e1   Thumb Code    22  track.o(i.Track_IsRunning)
     Track_LapIndex                           0x080022fd   Thumb Code    26  track.o(i.Track_LapIndex)
     Track_Read                               0x08002399   Thumb Code    10  track.o(i.Track_Read)
@@ -1571,10 +1571,10 @@ Image component sizes
        318         70          0          8         64       3080   serial.o
         64         26        236          0       1536        800   startup_stm32f10x_md.o
          2          0          0          0          0        381   system_init.o
-      2740        652         64         58          0      22323   track.o
+      2740        650         64         58          0      22319   track.o
 
     ----------------------------------------------------------------------
-     10400       1628       5908        136       2832      92080   Object Totals
+     10400       1626       5908        136       2832      92076   Object Totals
          0          0         32          0          0          0   (incl. Generated)
         16          0          5          2          0          0   (incl. Padding)
 
@@ -1623,9 +1623,9 @@ Image component sizes
 
       Code (inc. data)   RO Data    RW Data    ZI Data      Debug   
 
-     10680       1644       5908        136       2928      84860   Grand Totals
-     10680       1644       5908        136       2928      84860   ELF Image Totals
-     10680       1644       5908        136          0          0   ROM Totals
+     10680       1642       5908        136       2928      84856   Grand Totals
+     10680       1642       5908        136       2928      84856   ELF Image Totals
+     10680       1642       5908        136          0          0   ROM Totals
 
 ==============================================================================
 

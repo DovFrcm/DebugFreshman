@@ -392,6 +392,10 @@ static void test_laps_one(void)
     enter_trace_page();
 
     Track_SetLaps(1u);
+    /* 题目 4b 要的是"跑完设定圈数自动停车"，所以这里显式把"完成停车"打开。
+       上电默认是关的（跑满圈数不停车，见 test_run_forever），
+       所以想测 4b 就必须自己开，不能靠默认值。 */
+    Track_SetFinishStop(1u);
     Track_SetLineMark(1u);
     Track_SetRingEnable(0u);
     Track_SetBaseSpeed(1800u);
@@ -497,6 +501,7 @@ static void test_laps_two(void)
     enter_trace_page();
 
     Track_SetLaps(2u);
+    Track_SetFinishStop(1u);        /* 同上：4c 要求第二圈跑完停车，得自己开 */
     Track_SetLineMark(1u);
     Track_SetRingEnable(0u);
     Track_Stop();
@@ -533,6 +538,47 @@ static void test_laps_two(void)
     drive_with(0x06u, 6000u);
     drive_with(0x0Fu, 200u);
     expect(Track_LapsDone() == 2u, "the car stays stopped after the set number of laps");
+}
+
+/* ------------------------------------------------------------------
+ * 上电默认：s_finishStop = 0。
+ * 圈数只用来计时和报圈，跑满设定圈数**不停车**，一直跑下去。
+ * 这一条守的是"不做任何设置、一按发车就能连续跑"的行为；
+ * 菜单里的「巡线设置 → 完成停车」仍然可以改回开（题目 4b/4c 要它开）。
+ * ------------------------------------------------------------------ */
+static void test_run_forever(void)
+{
+    printf("\n--- I2. 上电默认：跑满圈数不停车，一直跑 ----------------------\n");
+
+    enter_trace_page();
+
+    Track_Init();                   /* 回到上电初值，不作任何额外设置 */
+    expect(Track_GetFinishStop() == 0u, "power-on default: finish-stop is OFF");
+    expect(Track_GetLaps() == 1u, "power-on default: 1 lap is configured");
+
+    Track_SetBaseSpeed(1800u);
+    Track_SetRingEnable(0u);
+    Track_Stop();
+    fake_beep_reset();
+    fake_sensor_set(0x06u);
+    step_ms(20u);
+
+    Menu_HandleKey(KEY_1);          /* K1 发车 */
+    drive_with(0x06u, 6000u);
+    drive_with(0x0Fu, 200u);        /* 过起跑线：算第 1 圈 */
+
+    expect(Track_LapsDone() == 1u, "lap 1 counted");
+    expect(Track_IsRunning() != 0u, "keeps running past the configured lap count");
+    expect(Track_State() != TRACK_ST_FINISH, "state is not FINISH after the set laps");
+
+    /* 再跑一圈，还是不停 */
+    drive_with(0x00u, 200u);
+    drive_with(0x06u, 6000u);
+    drive_with(0x0Fu, 200u);
+
+    expect(Track_LapsDone() == 2u, "lap 2 counted");
+    expect(Track_IsRunning() != 0u, "still running: no lap limit");
+    expect(Track_State() != TRACK_ST_FINISH, "still not FINISH after lap 2");
 }
 
 static void test_serial_commands(void)
@@ -696,6 +742,7 @@ int main(void)
     test_laps_one();
     test_lap_beep_timing();
     test_laps_two();
+    test_run_forever();
     test_serial_commands();
     test_page_safety();
     test_screens();
