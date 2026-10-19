@@ -64,7 +64,7 @@
 #define TRACK_SPEED_MIN         400u
 #define TRACK_SPEED_MAX         3600u
 
-static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
+static const uint16_t s_speedLevels[] = { 900u, 900u, 1200u, 1500u };
 #define TRACK_SPEED_LEVELS      (sizeof(s_speedLevels) / sizeof(s_speedLevels[0]))
 
 /* ---- 正常循迹的转向修正（中间直行 + 偏了就加速另一侧轮子）---- */
@@ -88,8 +88,14 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
    留着是为了以后想恢复"内轮反向帮过弯"时有现成的值。 */
 #define TRACK_REV_LIMIT         1500
 
-/* 原地强转的速度（只剩最外侧一路压线时用，见 Control_Sharp） */
+/* 原地强转的速度（直角/折线、只剩最外侧一路时用，见 Control_Sharp）。
+   2026-10 实测把 1500 稍微调高到 1800：转角更快、更利落。
+   转得过头/来回摆就调小，转不过来就再调大。 */
 #define TRACK_SPIN_SPEED        1500
+
+/* 进强转后**先直行**一小段（把车身摆正再转，转角更小、总转弯时间更短）。
+   给 0 就恢复成"进强转立刻原地转"。 */
+#define TRACK_SHARP_STRAIGHT_MS 0u
 
 /* **全部传感器都压线**（7 路全黑 = 0x7F）-> 认为压在十字/起跑线上，锁定直行通过。
    ⚠ 这条判据优先级最高，一旦成立就完全不转向 —— 所以如果因为传感器高度/阈值
@@ -663,9 +669,12 @@ static void Control_Cross(uint32_t now)
     DriveForward((uint16_t)s_baseSpeed);
 }
 
-/* 强转：朝指定方向原地转，直到**正中间那一路**重新压到线 */
+/* 强转：先直行一小段把车身摆正，再朝指定方向原地转，
+   直到**正中间那一路**重新压到线 */
 static void Control_Sharp(uint32_t now, uint8_t mask)
 {
+    uint32_t inSharp = (uint32_t)(now - s_stateMs);
+
     /* 退出判据是"正中间看到线了"，**不能**用 TRACK_MASK_MID（中间三路任意一路）。
        因为进入强转的图形本身就含中间三路里的 S3 或 S5：
        直角口那一路是 0x07（含 S3），用"任意一路"判的话，刚进强转就立刻退出，
@@ -678,8 +687,16 @@ static void Control_Sharp(uint32_t now, uint8_t mask)
         return;
     }
 
-    if ((uint32_t)(now - s_stateMs) > TRACK_SHARP_TIMEOUT_MS) {
+    if (inSharp > TRACK_SHARP_TIMEOUT_MS) {
         EnterState(TRACK_ST_LOST);
+        return;
+    }
+
+    /* 头 TRACK_SHARP_STRAIGHT_MS：先**直行一小段**再转。
+       刚识别到直角时车头还压着拐角，先直着往前走一点点、把车摆正，
+       再原地转需要的角度更小，总转弯时间也就更短。 */
+    if (inSharp < TRACK_SHARP_STRAIGHT_MS) {
+        DriveForward((uint16_t)s_baseSpeed);
         return;
     }
 

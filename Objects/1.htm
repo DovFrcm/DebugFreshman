@@ -3,7 +3,7 @@
 <title>Static Call Graph - [.\Objects\1.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image .\Objects\1.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060528: Last Updated: Mon Oct 19 18:18:35 2026
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060528: Last Updated: Mon Oct 19 19:05:42 2026
 <BR><P>
 <H3>Maximum Stack Usage =        160 bytes + Unknown(Functions without stacksize, Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -1605,13 +1605,12 @@ Local Symbols
 <BR>[Called By]<UL><LI><a href="#[79]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Track_Tick
 </UL>
 
-<P><STRONG><a name="[8d]"></a>Control_Lost</STRONG> (Thumb, 84 bytes, Stack size 8 bytes, track.o(i.Control_Lost))
+<P><STRONG><a name="[8d]"></a>Control_Lost</STRONG> (Thumb, 52 bytes, Stack size 8 bytes, track.o(i.Control_Lost))
 <BR><BR>[Stack]<UL><LI>Max Depth = 68<LI>Call Chain = Control_Lost &rArr; SpinDir &rArr; SpinRight &rArr; Motor_SetLR &rArr; Motor_ChannelDrive
 </UL>
 <BR>[Calls]<UL><LI><a href="#[8e]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Motor_Stop
 <LI><a href="#[8f]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;SpinDir
 <LI><a href="#[8a]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;EnterState
-<LI><a href="#[8b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;DriveForward
 </UL>
 <BR>[Called By]<UL><LI><a href="#[79]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Track_Tick
 </UL>
@@ -1629,11 +1628,12 @@ Local Symbols
 <BR>[Called By]<UL><LI><a href="#[79]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Track_Tick
 </UL>
 
-<P><STRONG><a name="[95]"></a>Control_Sharp</STRONG> (Thumb, 62 bytes, Stack size 16 bytes, track.o(i.Control_Sharp))
+<P><STRONG><a name="[95]"></a>Control_Sharp</STRONG> (Thumb, 76 bytes, Stack size 16 bytes, track.o(i.Control_Sharp))
 <BR><BR>[Stack]<UL><LI>Max Depth = 76<LI>Call Chain = Control_Sharp &rArr; SpinDir &rArr; SpinRight &rArr; Motor_SetLR &rArr; Motor_ChannelDrive
 </UL>
 <BR>[Calls]<UL><LI><a href="#[8f]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;SpinDir
 <LI><a href="#[8a]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;EnterState
+<LI><a href="#[8b]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;DriveForward
 </UL>
 <BR>[Called By]<UL><LI><a href="#[79]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Track_Tick
 </UL>
@@ -1654,7 +1654,7 @@ Local Symbols
 </UL>
 <BR>[Calls]<UL><LI><a href="#[94]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Motor_SetLR
 </UL>
-<BR>[Called By]<UL><LI><a href="#[8d]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Control_Lost
+<BR>[Called By]<UL><LI><a href="#[95]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Control_Sharp
 <LI><a href="#[8c]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Control_Gap
 <LI><a href="#[89]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;Control_Cross
 </UL>

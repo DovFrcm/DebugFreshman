@@ -516,8 +516,12 @@ static void test_right_angle(void)
     drive_with(M_L3, 40u);                       /* 0x07 = S1+S2+S3 */
     expect(Track_State() == TRACK_ST_SHARP,
            "S1+S2+S3 whole left row black, centre clear -> SHARP");
+    expect(Motor_GetLeft() > 0 && Motor_GetRight() > 0,
+           "first it drives STRAIGHT briefly (run-up before the turn)");
+
+    drive_with(M_L3, 100u);                      /* 超过 TRACK_SHARP_STRAIGHT_MS */
     expect(Motor_GetLeft() < 0,
-           "and it pivots LEFT in place (left wheel reverses)");
+           "then it pivots LEFT in place (left wheel reverses)");
 
     /* 转到位：中间几路重新压到线 -> 交还给巡线 */
     drive_with(M_MID, 40u);
@@ -529,7 +533,11 @@ static void test_right_angle(void)
     drive_with(M_R3, 40u);                       /* 0x70 = S5+S6+S7 */
     expect(Track_State() == TRACK_ST_SHARP,
            "S5+S6+S7 whole right row black -> SHARP");
-    expect(Motor_GetRight() < 0, "and it pivots RIGHT in place");
+    expect(Motor_GetLeft() > 0 && Motor_GetRight() > 0,
+           "first it drives STRAIGHT briefly (run-up, mirror)");
+
+    drive_with(M_R3, 100u);
+    expect(Motor_GetRight() < 0, "then it pivots RIGHT in place");
 
     /* 只压一两路是**漂移**不是拐角 -> 必须还是温和修正，不能原地转 */
     launch(M_CEN, 0u);
