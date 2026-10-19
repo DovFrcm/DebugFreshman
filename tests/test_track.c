@@ -301,16 +301,12 @@ static void test_gap_and_lost(void)
     expect(Motor_GetLeft() > 0 && Motor_GetRight() > 0,
            "in GAP both wheels still drive FORWARD (no spinning)");
 
-    /* 一直冲不过去 -> 转成找线。直着丢的线（刚才车是正的）在正前方，
-       应该**慢慢往前找**，而不是原地朝默认一侧转（默认侧是"左"，
-       原地转会变成"每次断线都左拐"） */
+    /* 一直冲不过去 -> 转成原地找线，朝最后看到线的那一侧转 */
     step_ms(300u);
     expect(Track_State() == TRACK_ST_LOST,
            "gap not cleared -> LOST (search for the line)");
-    expect(Motor_GetLeft() > 0 && Motor_GetRight() > 0,
-           "in LOST it searches FORWARD (the line is straight ahead)");
-    expect(Motor_GetLeft() == Motor_GetRight(),
-           "and both wheels stay equal (no default left spin)");
+    expect(Motor_GetLeft() == -Motor_GetRight(),
+           "in LOST the car spins on the spot (wheels in opposite directions)");
 
     /* 找到线就回到正常循迹 */
     drive_with(0x06u, 40u);

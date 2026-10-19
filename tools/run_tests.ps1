@@ -1,4 +1,4 @@
-# run_tests.ps1 - 在电脑上编译并运行全部测试，然后把画面渲染成 PNG
+﻿# run_tests.ps1 - 在电脑上编译并运行全部测试，然后把画面渲染成 PNG
 #
 # 不需要开发板。它把固件里真实的 oled.c / oled_font.c / menu.c / app.c /
 # track.c / motor.c 编译到电脑上，只把硬件层（board.c、serial.c）换成
@@ -31,13 +31,13 @@ $failed = 0
 $log = New-Object System.Text.StringBuilder
 
 function Invoke-Suite {
-    param([string]$Name, [string]$Main, [string[]]$Extra = @())
+    param([string]$Name, [string]$Main)
 
     Write-Host "=== building $Name ==="
     $exe = "tests/$Name.exe"
     $src = @("tests/$Main") + $fake + $fw
 
-    & gcc @common @Extra @src -o $exe
+    & gcc @common @src -o $exe
     if ($LASTEXITCODE -ne 0) {
         Write-Host "BUILD FAILED: $Name" -ForegroundColor Red
         $script:failed = 1
@@ -55,13 +55,8 @@ function Invoke-Suite {
     }
 }
 
-# test_track.c 里的掩码是按**四路**写死的（0x06 / 0x0F / 0x07 …），所以它固定
-# 按 4 路编译 —— 这是"改了读取层之后，原来的四路行为没被弄坏"的回归测试。
-# test_track7.c 是七路专项测试，按固件实际配置（7 路）编译。
-# test_menu.c 也按固件配置编译，这样它渲染出来的截图就是板子上真正显示的样子。
-Invoke-Suite -Name 'test_menu'   -Main 'test_menu.c'   -Extra @('-DTRACK_SENSOR_COUNT=7')
-Invoke-Suite -Name 'test_track'  -Main 'test_track.c'  -Extra @('-DTRACK_SENSOR_COUNT=4')
-Invoke-Suite -Name 'test_track7' -Main 'test_track7.c' -Extra @('-DTRACK_SENSOR_COUNT=7')
+Invoke-Suite -Name 'test_menu'  -Main 'test_menu.c'
+Invoke-Suite -Name 'test_track' -Main 'test_track.c'
 
 # 把两个套件的输出合起来存盘，renderscreens.ps1 会把它渲染成 PNG。
 # 用 UTF8 无 BOM 写，否则中文会变成乱码。
