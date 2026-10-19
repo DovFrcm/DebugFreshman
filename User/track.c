@@ -67,6 +67,20 @@
 static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 #define TRACK_SPEED_LEVELS      (sizeof(s_speedLevels) / sizeof(s_speedLevels[0]))
 
+/* ================================================================== */
+/* 转弯速度（原始 PWM 值，满量程 7199）                               */
+/* ================================================================== */
+/* 所有"转弯/元素"用到的轮速都在**这一个区**里调：
+     TRACK_SPIN_SPEED   直角/急弯原地强转（SHARP）
+     TRACK_SEARCH_SPEED 丢线后原地找线（LOST）
+     TRACK_GAP_SPEED    断线直冲（GAP）
+     TRACK_RING_BIAS    绕环朝环内侧的固定偏置（RING，加在一侧轮子上）
+   直线巡线的修正量不在这里，在下面的 TRACK_TURN_MS / TRACK_TURN_BOOST。 */
+#define TRACK_SPIN_SPEED        1500
+#define TRACK_SEARCH_SPEED      1300
+#define TRACK_GAP_SPEED         1500
+#define TRACK_RING_BIAS         650
+
 /* ---- 正常循迹的转向修正（中间直行 + 偏了就加速另一侧轮子）---- */
 
 /* 一次修正**至少**持续多久。这是整套策略里最关键的参数：
@@ -88,9 +102,6 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
    留着是为了以后想恢复"内轮反向帮过弯"时有现成的值。 */
 #define TRACK_REV_LIMIT         1500
 
-/* 原地强转的速度（只剩最外侧一路压线时用，见 Control_Sharp） */
-#define TRACK_SPIN_SPEED        1500
-
 /* **全部传感器都压线**（7 路全黑 = 0x7F）-> 认为压在十字/起跑线上，锁定直行通过。
    ⚠ 这条判据优先级最高，一旦成立就完全不转向 —— 所以如果因为传感器高度/阈值
      没调好导致白底被读成全黑，车会被一直卡在这个状态里"直着冲"，
@@ -101,7 +112,6 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 
 /* 丢线后先直行冲刺的时间 —— 直线上的断路（缺口）靠它过去。 */
 #define TRACK_GAP_MS            170u
-#define TRACK_GAP_SPEED         1500
 
 /* 丢线时"刚才基本是正的"的判据（偏差绝对值小于它）。
    这一条用来区分两种"全白"：
@@ -110,8 +120,8 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
    不区分的话，直角弯上会先傻冲 170 ms，直接冲出赛道。 */
 #define TRACK_GAP_CENTER_ERR    130
 
-/* 原地找线的速度，以及找多久还没找到就放弃停车（0 = 不超时） */
-#define TRACK_SEARCH_SPEED      1300u
+/* 原地找线找多久还没找到就放弃停车（0 = 不超时）。
+   找线用的速度见下面"转弯速度"区的 TRACK_SEARCH_SPEED。 */
 #define TRACK_SEARCH_TIMEOUT_MS 3000u
 
 /* 强转超时：直角/折线最多转这么久。超时说明线真的没了，转去找线。 */
@@ -132,8 +142,7 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 #define TRACK_RING_MIN_MS       700u
 /* 绕这么久还没出去就强行退出，别在环里转到天荒地老 */
 #define TRACK_RING_TIMEOUT_MS   8000u
-/* 绕环时朝环内侧额外加的转向偏置，让车贴着圆弧走 */
-#define TRACK_RING_BIAS         650
+/* 绕环时朝环内侧额外加的转向偏置（速度值见"转弯速度"区的 TRACK_RING_BIAS） */
 
 /* ================================================================== */
 /* 传感器位置权重（单位 1/100 个传感器间距）                            */
@@ -511,24 +520,35 @@ static void DriveForward(uint16_t speed)
     Motor_SetLR((int16_t)speed, (int16_t)speed);
 }
 
-static void SpinLeft(void)
+/* ------------------------------------------------------------------ */
+/* 原地转（带速度参数）：左转 / 右转 / 按方向转                        */
+/* ------------------------------------------------------------------ */
+/* 所有转弯/元素的速度都在文件顶部的"转弯速度"宏区里调，这里只按参数执行 */
+static void SpinLeftAt(uint16_t speed)
 {
     /* 左轮后退、右轮前进 = 原地左转（车头往左偏） */
-    Motor_SetLR(-(int16_t)TRACK_SPIN_SPEED, (int16_t)TRACK_SPIN_SPEED);
+    Motor_SetLR(-(int16_t)speed, (int16_t)speed);
 }
 
-static void SpinRight(void)
+static void SpinRightAt(uint16_t speed)
 {
-    Motor_SetLR((int16_t)TRACK_SPIN_SPEED, -(int16_t)TRACK_SPIN_SPEED);
+    Motor_SetLR((int16_t)speed, -(int16_t)speed);
 }
 
-static void SpinDir(uint8_t dir)
+/* dir: 0 = 左, 1 = 右 */
+static void SpinDirAt(uint8_t dir, uint16_t speed)
 {
     if (dir == 0u) {
-        SpinLeft();
+        SpinLeftAt(speed);
     } else {
-        SpinRight();
+        SpinRightAt(speed);
     }
+}
+
+/* 直角/急弯强转：用 TRACK_SPIN_SPEED */
+static void SpinDir(uint8_t dir)
+{
+    SpinDirAt(dir, (uint16_t)TRACK_SPIN_SPEED);
 }
 
 /* ================================================================== */
@@ -696,7 +716,7 @@ static void Control_Gap(uint32_t now)
     DriveForward((uint16_t)TRACK_GAP_SPEED);
 }
 
-/* 原地找线：朝最后看到线的那一侧转 */
+/* 原地找线：朝最后看到线的那一侧转（用自己的速度宏 TRACK_SEARCH_SPEED） */
 static void Control_Lost(uint32_t now)
 {
 #if TRACK_SEARCH_TIMEOUT_MS != 0u
@@ -707,7 +727,7 @@ static void Control_Lost(uint32_t now)
         return;
     }
 #endif
-    SpinDir(s_lastSide);
+    SpinDirAt(s_lastSide, (uint16_t)TRACK_SEARCH_SPEED);
 }
 
 /* 绕圆环：正常转向修正 + 朝环内的固定偏置，直到再次看到"丁字"就是出口 */
