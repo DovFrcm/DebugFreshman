@@ -1,15 +1,21 @@
 /*
- * track.c - 4 路灰度循迹：传感器读取 + PD 控制器 + 特殊元素状态机
+ * track.c - 循迹控制：传感器读取（4/7 路可切）+ 简单转向 + 特殊元素状态机
  *
  * 控制流程（Track_Tick 每 2 ms 走一圈）：
  *
- *   读传感器(PB12..15) -> 消抖 -> 偏差 error -> 状态机 -> 左右轮速度 -> TIM4
- *                                    |
- *                                    +-- 四路全黑  -> CROSS  锁定直行 / 计圈
- *                                    +-- 三路"丁字"-> RING   进圆环
- *                                    +-- 只剩最外侧一路 -> SHARP 原地强转
- *                                    +-- 全白      -> GAP -> LOST（断路 / 找线）
- *                                    +-- 其余      -> RUN    PD 控制
+ *   读传感器 -> 消抖 -> 偏差 error -> 状态机 -> 左右轮速度 -> TIM4
+ *                          |             |
+ *                          |             +-- 全部压线  -> CROSS  锁定直行 / 计圈
+ *                          |             +-- 圆环"丁字"-> RING   进圆环
+ *                          |             +-- 只剩最外侧 -> SHARP  原地强转
+ *                          |             +-- 全白      -> GAP -> LOST（断路 / 找线）
+ *                          |             +-- 其余      -> RUN    简单转向判断
+ *                          |
+ *                          +-- error 只当状态机判据（"刚才车正不正"）和串口显示，
+ *                              **不参与控制**
+ *
+ * 正常循迹不用 PD：中间几路直行，线偏到哪一侧就把另一侧的轮子加快一段时间
+ * （见 Control_Turn 和 TRACK_TURN_MS / TRACK_TURN_BOOST）。
  */
 
 #include "track.h"
@@ -29,13 +35,14 @@
    3 次 × 2 ms = 6 ms，比任何真实的路面变化都快，但足以滤掉毛刺。 */
 #define TRACK_SETTLE_TICKS      3u
 
-/* PD 增益。误差范围是 ±300（最外侧一路压线时的极限），
-   所以 Kp = 5000 时最大能贡献 ±1500 的转向量。
-   调参口诀：
-     车画龙（左右摆）      -> Kp 调小，或 Kd 调大
-     过弯跟不上、切内线    -> Kp 调大
-     进弯瞬间冲出去        -> Kd 调大（提前开始打方向）
-     出弯后回正慢 / 发抖   -> Kd 调小 */
+/* ⚠ 下面这几个 PD 参数**当前没有在用**。
+   正常循迹已经换成"中间直行 + 偏了就加速另一侧轮子"的规则（见 Control_Turn
+   和 TRACK_TURN_MS / TRACK_TURN_BOOST）。这几个宏先留着，是想改回 PD 的时候
+   方便；真要回去的话：把 Control_Turn() 换回原来的 PD 实现，并把 s_dError
+   这个静态变量一起加回来（它已经从工程里删掉了，留着会被编译器报
+   "was set but never used"）。
+
+   原来的 PD 增益：误差范围 ±300，Kp = 5000 时最大贡献 ±1500 的转向量。 */
 #define TRACK_KP                5000
 #define TRACK_KD                1300
 
@@ -60,16 +67,36 @@
 static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 #define TRACK_SPEED_LEVELS      (sizeof(s_speedLevels) / sizeof(s_speedLevels[0]))
 
-/* 内轮允许的最大反转量。直角弯、折线要靠它原地转过去。
-   给太大车会转过头来回摆，给太小急弯过不去。 */
+/* ---- 正常循迹的转向修正（中间直行 + 偏了就加速另一侧轮子）---- */
+
+/* 一次修正**至少**持续多久。这是整套策略里最关键的参数：
+   给太小 -> 刚加速就停，修正量不够，车会慢慢地一直偏；
+   给太大 -> 一次修过头，然后反向修，车开始画龙。
+   经验值：让这一段时间内车走过大约 20~40mm。
+   按实测车速 v 算：TRACK_TURN_MS ≈ 30mm / v × 1000。
+   （例：v = 250 mm/s -> 约 120ms） */
+#define TRACK_TURN_MS           80u
+
+/* 修正时把那一侧的轮子加快多少（原始 PWM 值）。
+   基础速度 TRACK_SPEED_DEFAULT 是 900，这里给 1800 就是那一侧跑到 2700（三倍），
+   差速很猛。车反应太慢、压不住线 -> 再调大；一修就甩过头、左右摆 -> 调小。
+   ⚠ 这个值要跟着基础速度一起看：基础速度改了，差速的比例也就变了。 */
+#define TRACK_TURN_BOOST        1800
+
+/* ⚠ TRACK_REV_LIMIT 当前没有在用：正常循迹已经不允许内轮反转了
+   （Control_Turn 只封上限，不倒转），急弯的原地转全部交给 SHARP 状态。
+   留着是为了以后想恢复"内轮反向帮过弯"时有现成的值。 */
 #define TRACK_REV_LIMIT         1500
 
-/* 原地强转的速度 */
+/* 原地强转的速度（只剩最外侧一路压线时用，见 Control_Sharp） */
 #define TRACK_SPIN_SPEED        1500
 
-/* 四路全黑 -> 认为压在十字/起跑线上，锁定直行通过。
+/* **全部传感器都压线**（7 路全黑 = 0x7F）-> 认为压在十字/起跑线上，锁定直行通过。
+   ⚠ 这条判据优先级最高，一旦成立就完全不转向 —— 所以如果因为传感器高度/阈值
+     没调好导致白底被读成全黑，车会被一直卡在这个状态里"直着冲"，
+     表现就是"小车根本不修正"。排查时先看屏幕上第 0 行是不是一直显示"十字"。
    这个时间要够车开过整条横线（横线一般比传感器阵列宽），
-   太长会在真的十字上"傻冲"一段，太短则刚出横线就又被 PD 带偏。 */
+   太长会在真的十字上"傻冲"一段，太短则刚出横线就又被转向修正带偏。 */
 #define TRACK_CROSS_MS          90u
 
 /* 丢线后先直行冲刺的时间 —— 直线上的断路（缺口）靠它过去。 */
@@ -111,9 +138,70 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 /* ================================================================== */
 /* 传感器位置权重（单位 1/100 个传感器间距）                            */
 /* ================================================================== */
-/* S1 在 -300，S4 在 +300，中间两路各占 ±100。
-   四个都压线时平均是 0（车正对着交叉点），符合直觉。 */
-static const int16_t s_pos[4] = { -300, -100, 100, 300 };
+/* 左右对称，最外侧固定为 ±300（和四路时一致，所以原来的 Kp/Kd 和
+   TRACK_GAP_CENTER_ERR 这些阈值都不用重调）。
+     4 路：间距归一化成 200 -> { -300, -100, +100, +300 }
+     7 路：间距归一化成 100 -> { -300, -200, -100, 0, +100, +200, +300 }
+   全压线时平均是 0（车正对着交叉点），符合直觉。 */
+#if TRACK_SENSOR_COUNT >= 7
+static const int16_t s_pos[TRACK_SENSOR_COUNT] =
+    { -300, -200, -100, 0, 100, 200, 300 };
+#else
+static const int16_t s_pos[TRACK_SENSOR_COUNT] = { -300, -100, 100, 300 };
+#endif
+
+/* ================================================================== */
+/* 掩码图形：各元素判据用的位组合                                      */
+/* ================================================================== */
+/* 掩码位序：bit0 = S1（最左）.. bit(N-1) = SN（最右），1 = 压到黑线。
+   下面这几组图形换传感器路数时要跟着改，改完到现场拿「巡线功能」页
+   或串口 SENSORS 对着实际元素读一遍就能校准。 */
+
+/* "咬住线了"的中间几路。4 路是中间两路，7 路是中间三路。 */
+#if TRACK_SENSOR_COUNT >= 7
+#define TRACK_MASK_MID      0x1Cu   /* S3+S4+S5 */
+#else
+#define TRACK_MASK_MID      0x06u   /* S2+S3     */
+#endif
+
+/* 直角 / 折线的判据：**中线一侧"那一侧全部"几路都黑、而正中间是空的**。
+   含义是"前面已经没线了，线拐到一边去了" —— 该原地 90° 强转了。
+
+   为什么要求"正中间是空的"：正中间也黑（0x0F / 0x78）说明主线还在，
+   那是 T 字路口 / 圆环入口，由 TRACK_RING_PAT_* 那套管，不归这里。
+
+   为什么不是"一侧任意一路黑"：线在直线上正常漂移时也会压到侧面的路，
+   那种情况只要温和修正就行（Control_Turn），原地 90° 转就过头了。
+   要**整侧全黑**才说明是拐角。 */
+#if TRACK_SENSOR_COUNT >= 7
+#define TRACK_MASK_LEFT3    0x07u   /* S1+S2+S3：左侧整排 */
+#define TRACK_MASK_RIGHT3   0x70u   /* S5+S6+S7：右侧整排 */
+#define TRACK_MASK_CENTER   0x08u   /* S4：正中间       */
+#else
+/* 四路没有"一侧三路"这回事，退化成"只剩最外侧一路"，
+   和原来的判据完全一致，行为不变。 */
+#define TRACK_MASK_LEFT3    0x01u   /* S1 */
+#define TRACK_MASK_RIGHT3   0x08u   /* S4 */
+#define TRACK_MASK_CENTER   0x06u   /* S2+S3 */
+#endif
+
+/* 注意：判断"线偏左还是偏右"**不是**用"左边那几路有没有压到"这种宏，
+   而是用 MaskLean() 数中线左右各压了几路再比大小。原因见 MaskLean() 上面
+   那段注释 —— 直线上一般两路同时压线，常常是 S3+S4 / S4+S5 这种跨中线的
+   图形，用"有没有"判会把它们误判成正中。 */
+
+/* 圆环入口的"丁字"图形：主线还在（中间那路压着），一侧多出一支。
+   4 路时是"正好三路压线"：0x07 = S1+S2+S3（左）、0x0E = S2+S3+S4（右）。
+   7 路时中间是 S4，所以左边一支亮 S1~S3、右边一支亮 S5~S7。
+   ⚠ 这两个值最好现场校准：把车停在六边形环的入口，看串口 SENSORS 读出来
+     的图形，把它填到这里。填错了表现为"进不去环"或"直线也误入环"。 */
+#if TRACK_SENSOR_COUNT >= 7
+#define TRACK_RING_PAT_LEFT     0x0Fu   /* S1+S2+S3+S4：多出来的一支在左 */
+#define TRACK_RING_PAT_RIGHT    0x78u   /* S4+S5+S6+S7：多出来的一支在右 */
+#else
+#define TRACK_RING_PAT_LEFT     0x07u   /* S1+S2+S3 */
+#define TRACK_RING_PAT_RIGHT    0x0Eu   /* S2+S3+S4 */
+#endif
 
 /* ================================================================== */
 /* 内部状态                                                            */
@@ -128,12 +216,16 @@ static uint8_t  s_candCount;
 
 static int16_t  s_error;            /* 最近一次偏差                     */
 static int16_t  s_lastError;
-static int32_t  s_dError;           /* 低通之后的微分                   */
 
 static uint8_t  s_lastSide;         /* 最后压线的一侧：0=左 1=右        */
 static uint8_t  s_turnDir;          /* 强转方向：0=左 1=右              */
 static uint8_t  s_ringDir;          /* 绕环方向：0=左 1=右              */
 static uint8_t  s_ringTicks;        /* 丁字图形连续出现的拍数           */
+
+/* 转向修正的状态：正在修哪一侧、修到什么时候。
+   s_turnSide: 0xFF = 没在修（直行）, 0 = 线偏左正在加快右轮, 1 = 线偏右加快左轮 */
+static uint8_t  s_turnSide;
+static uint32_t s_turnUntilMs;      /* 这次修正的最早结束时刻           */
 
 static uint32_t s_lastCtrlMs;
 static uint32_t s_stateMs;          /* 进入当前状态的时刻               */
@@ -155,24 +247,81 @@ static uint8_t  s_finishStop;
 /* ================================================================== */
 /* 传感器读取                                                          */
 /* ================================================================== */
+/* 引脚表：顺序就是车头方向从左到右 S1..SN。
+   ⚠ 这张表必须和实际接线一一对应 —— 以后改接线只改这里。
+   4 路和 7 路的前四路完全相同（PB12~PB15），所以两种接法之间来回切换
+   不用重新焊线。
+   这张表在 track.h 里导出，宿主端测试的假硬件也用它。 */
+const SensorPin g_trackSensorPins[TRACK_SENSOR_COUNT] = {
+#if TRACK_SENSOR_COUNT >= 7
+    { GPIOB, 12u },     /* S1  最左 */
+    { GPIOB, 13u },     /* S2       */
+    { GPIOB, 14u },     /* S3       */
+    { GPIOB, 15u },     /* S4       */
+    { GPIOA,  6u },     /* S5       */
+    { GPIOA,  7u },     /* S6       */
+    { GPIOB,  0u }      /* S7  最右 */
+#else
+    { GPIOB, 12u },     /* S1  最左 */
+    { GPIOB, 13u },     /* S2       */
+    { GPIOB, 14u },     /* S3       */
+    { GPIOB, 15u }      /* S4  最右 */
+#endif
+};
 
-uint8_t Track_Read(void)
-{
-    uint32_t idr = TRACK_PORT->IDR;
-    uint8_t  m;
+/* 掩码全是 1 的值：4 路是 0x0F，7 路是 0x7F */
+#define TRACK_MASK_ALL      ((uint8_t)((1u << TRACK_SENSOR_COUNT) - 1u))
 
-    /* PB12..15 是连续的四个脚，一次读 IDR 就能全拿到。
-       先右移到 bit0..3，再按"看见黑线是低电平"取反。 */
-    m = (uint8_t)((idr >> TRACK_PIN_S1) & 0x0Fu);
-
-#if TRACK_BLACK_IS_LOW
-    m = (uint8_t)(~m & 0x0Fu);
+/* ⚠ 现场实测（2026-10，七路模块）：十字口读出来是**全白**、断线口读出来是
+   **全黑** —— 和代码原本假设的正好相反，所以把"十字/断线"两个判据对调：
+     全白 -> 十字（锁定直行 + 计圈）
+     全黑 -> 断线（直冲过去）
+   这是按实测做的**判据对调**，只影响这两个"全黑/全白"元素的归属，
+   转向修正、直角、圆环的判据一概不动。
+   以后传感器（高度/阈值）调正常了，把这里改回 0 即可。
+   四路配置保持原样（那是老模块的老实测）。 */
+#if TRACK_SENSOR_COUNT >= 7
+#define TRACK_CROSS_GAP_SWAPPED  1
+#else
+#define TRACK_CROSS_GAP_SWAPPED  0
 #endif
 
 #if TRACK_REVERSE
-    /* 把 bit0<->bit3、bit1<->bit2 对调 */
-    m = (uint8_t)(((m & 0x1u) << 3) | ((m & 0x2u) << 1)
-                | ((m & 0x4u) >> 1) | ((m & 0x8u) >> 3));
+/* 把整条掩码左右对调，对任意路数都成立 */
+static uint8_t ReverseMask(uint8_t m)
+{
+    uint8_t r = 0u;
+    uint8_t i;
+
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
+        if ((m & (uint8_t)(1u << i)) != 0u) {
+            r |= (uint8_t)(1u << (TRACK_SENSOR_COUNT - 1u - i));
+        }
+    }
+    return r;
+}
+#endif
+
+uint8_t Track_Read(void)
+{
+    uint8_t m = 0u;
+    uint8_t i;
+
+    /* 逐路查表读。7 路跨了 GPIOA / GPIOB 两个口，所以不能像四路那样
+       一次 IDR 移位搞定；每个控制周期读 7 个脚，开销可以忽略。 */
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
+        if ((g_trackSensorPins[i].port->IDR & BIT(g_trackSensorPins[i].pin)) != 0u) {
+            m |= (uint8_t)(1u << i);
+        }
+    }
+
+#if TRACK_BLACK_IS_LOW
+    /* 模块是"看见黑线拉低"，取反成"1 = 压线" */
+    m = (uint8_t)(~m & TRACK_MASK_ALL);
+#endif
+
+#if TRACK_REVERSE
+    m = ReverseMask(m);
 #endif
 
     return m;
@@ -187,11 +336,56 @@ uint8_t Track_IsRunning(void)
     return (uint8_t)((s_state != TRACK_ST_IDLE) && (s_state != TRACK_ST_FINISH));
 }
 
+/* 直角 / 折线入口判据：**一侧整排全黑、正中间是空的**。
+   返回 0 = 往左 90° 转，1 = 往右 90° 转，0xFF = 不是拐角。
+
+   7 路时就是 0x07（S1+S2+S3 全黑）和 0x70（S5+S6+S7 全黑）。
+   4 路时退化成"只剩最外侧一路"（0x01 / 0x08），和原来的判据一致。
+
+   触发后走的是 SHARP 状态：原地朝那一侧转，直到正中间那一路重新压到线 ——
+   对直角来说正好就是转够 90° 之后咬住新方向的那条线。 */
+static uint8_t Sharp_EntryDir(uint8_t mask)
+{
+    /* 左侧整排黑 + 右边一路都没黑 + 正中间空 -> 线拐到左边去了 */
+    if (((mask & TRACK_MASK_LEFT3) == TRACK_MASK_LEFT3)
+        && ((mask & TRACK_MASK_RIGHT3) == 0u)
+        && ((mask & TRACK_MASK_CENTER) == 0u)) {
+        return 0u;
+    }
+
+    /* 镜像 */
+    if (((mask & TRACK_MASK_RIGHT3) == TRACK_MASK_RIGHT3)
+        && ((mask & TRACK_MASK_LEFT3) == 0u)
+        && ((mask & TRACK_MASK_CENTER) == 0u)) {
+        return 1u;
+    }
+
+    return 0xFFu;
+}
+
 /* 消抖：只有连续 TRACK_SETTLE_TICKS 次读到同样的新值才承认它变了。
-   没这一步的话，传感器停在黑白边界上抖动会让 PD 的微分项疯狂跳。 */
+   没这一步的话，传感器停在黑白边界上抖动会让转向判断来回猛跳。 */
 static void Sensor_Update(void)
 {
     s_raw = Track_Read();
+
+    /* ---------------- 快通道：直角/折线不等消抖 ----------------
+       消抖数的是"连续多少次**调用**"，不是多少毫秒。而刷一次 OLED 会把主循环
+       整整卡住十几毫秒（见 app.c 的说明），所以这几次调用实际可能横跨
+       三五十毫秒。
+
+       车跑起来冲过直角口时，"一侧整排全黑"这个图形本身只存在
+       （线宽 ÷ 车速）那么久 —— 18mm 的线、几百 mm/s 的车速，也就几十毫秒。
+       等消抖走完图形早没了，于是**用手慢慢推能识别、跑起来识别不到**。
+
+       这类图形要求一侧三路同时成立，本来就不容易被毛刺伪造，
+       所以直接采信未经消抖的原始读数，让它当拍生效。 */
+    if (Sharp_EntryDir(s_raw) != 0xFFu) {
+        s_stable    = s_raw;
+        s_cand      = s_raw;
+        s_candCount = 0u;
+        return;
+    }
 
     if (s_raw == s_stable) {
         s_candCount = 0u;
@@ -220,7 +414,7 @@ static uint8_t Popcount(uint8_t mask)
     uint8_t n = 0u;
     uint8_t i;
 
-    for (i = 0u; i < 4u; i++) {
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
         if ((mask & (uint8_t)(1u << i)) != 0u) {
             n++;
         }
@@ -229,7 +423,32 @@ static uint8_t Popcount(uint8_t mask)
 }
 
 /* ------------------------------------------------------------------ */
-/* 偏差：四个传感器的加权平均                                          */
+/* 线偏在中线的哪一侧                                                  */
+/* ------------------------------------------------------------------ */
+/* 把阵列以中线劈成左右两半，**数各压了几路再比大小**。
+   正中间那一路（奇数路数时才有）**不算进任何一边** —— 它是"在不在正中"
+   的标志，不是"偏哪边"的证据。
+
+   返回 -1 = 偏左, +1 = 偏右, 0 = 左右一样多（正中或对称）。
+
+   ⚠ 这里必须是"比大小"而不是"看有没有"：直线上一般两路同时压线，
+     而这两路常常正好跨在中线两侧（S3+S4 / S4+S5）。写成"左边有 + 右边有
+     = 对称"的话，这两种最普通的图形都会被判成正中而不修正。 */
+static int8_t MaskLean(uint8_t mask)
+{
+    uint8_t half  = (uint8_t)(TRACK_SENSOR_COUNT / 2u);       /* 7->3, 4->2 */
+    uint8_t odd   = (uint8_t)(TRACK_SENSOR_COUNT & 1u);       /* 7->1, 4->0 */
+    uint8_t lmask = (uint8_t)((1u << half) - 1u);             /* 左边那几路 */
+    uint8_t left  = Popcount((uint8_t)(mask & lmask));
+    uint8_t right = Popcount((uint8_t)(mask >> (uint8_t)(half + odd)));
+
+    if (left > right) { return -1; }
+    if (right > left) { return  1; }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* 偏差：压线那几路的加权平均（权重表 s_pos[] 在文件顶部）              */
 /* ------------------------------------------------------------------ */
 /* 没压线时返回 -1000（一个不可能出现的值），调用方靠它判断丢线。 */
 static int16_t ComputeError(uint8_t mask)
@@ -238,7 +457,7 @@ static int16_t ComputeError(uint8_t mask)
     uint8_t cnt = 0u;
     uint8_t i;
 
-    for (i = 0u; i < 4u; i++) {
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
         if ((mask & (uint8_t)(1u << i)) != 0u) {
             sum += s_pos[i];
             cnt++;
@@ -253,15 +472,21 @@ static int16_t ComputeError(uint8_t mask)
 }
 
 /* 压线偏多的一侧是左还是右。平手时保持上一次的判断，
-   免得车正对着线的时候判断在左右之间来回跳。 */
+   免得车正对着线的时候判断在左右之间来回跳。
+   这个结果只在"丢线之后往哪边找"和"全白后往哪边强转"时用到。
+
+   以阵列中线为界把掩码劈成左右两半，**两种情况不一样**：
+     偶数路（4 路）中线落在两路之间：左 = bit0..1，右 = bit2..3
+     奇数路（7 路）中线正好是一路（S4）：它必须**不算进任何一边**。
+       算进右边的话右边会凭空多出一路 —— 车在直线上（只有 S4 压线）
+       就会被判成"线在右边"，以后一丢线就永远往右转。 */
 static void UpdateLastSide(uint8_t mask)
 {
-    uint8_t left  = Popcount((uint8_t)(mask & 0x03u));   /* S1、S2 压了几路 */
-    uint8_t right = Popcount((uint8_t)(mask & 0x0Cu));   /* S3、S4 压了几路 */
+    int8_t lean = MaskLean(mask);
 
-    if (left > right) {
+    if (lean < 0) {
         s_lastSide = 0u;
-    } else if (right > left) {
+    } else if (lean > 0) {
         s_lastSide = 1u;
     }
     /* 相等就保持不变 */
@@ -275,6 +500,10 @@ static void EnterState(TrackState st)
 {
     s_state   = st;
     s_stateMs = Tick_Ms();
+
+    /* 换状态就把"正在修正"清掉：十字、强转、找线这些由各自的状态接管，
+       回来重新循迹时要从"直行"重新判断，别带着上一次的修正脉冲。 */
+    s_turnSide = 0xFFu;
 }
 
 static void DriveForward(uint16_t speed)
@@ -361,42 +590,72 @@ static void Track_OnLapDone(uint32_t now)
 /* 各个状态的控制器                                                    */
 /* ================================================================== */
 
-/* 正常循迹：算 PD，给左右轮差速 */
-static void Control_Pd(uint8_t mask)
+/* ------------------------------------------------------------------ */
+/* 正常循迹：正中间直行，线一离开正中就把另一侧的轮子加快一段时间        */
+/* ------------------------------------------------------------------ */
+/* 规则（7 路，从车头看从左往右 S1..S7，正中间是 S4）：
+     中线左边压得比右边多 -> 线偏在车的左边 -> 右轮加快
+     中线右边压得比左边多 -> 线偏在车的右边 -> 左轮加快
+     左右一样多           -> 对称/正中 -> 直行
+
+   ⚠ **必须"数路数比大小"，不能"看有没有"**。实测直线上一般是**两路**同时压线，
+   而这两路往往正好跨在中线两侧：
+
+       S3+S4（线略偏左）  左 1 路、右 0 路  -> 偏左 -> 右轮加快
+       S4+S5（线略偏右）  左 0 路、右 1 路  -> 偏右 -> 左轮加快
+       S3+S4+S5（真正中） 左 1 路、右 1 路  -> 平手 -> 直行
+
+   如果写成"左边只要有压 + 右边只要有压 = 对称"，上面第一种和第二种都会被
+   误判成"正中"而**完全不修正** —— 那车就只会直着冲出去。
+
+   正中间那一路（S4）**不算进任何一边**（它是"在不在正中"的标志，不是"偏哪边"）。
+
+   "一段时间"是最短持续时间：一旦判出偏了就把这次修正锁定 TRACK_TURN_MS，
+   这期间**即使传感器已经回到中间也继续修完** —— 这一步很重要，不然会出现
+   "一修就过头、一过头又反向修"的高频抖动。偏得久就每拍续期（一直修），
+   回到中间之后最多再修 TRACK_TURN_MS 就收手。
+
+   方向约定：线偏左 -> 右轮快 -> 车头往左摆（追着线走）。 */
+static void Control_Turn(uint8_t mask)
 {
-    int32_t err = (int32_t)s_error;
-    int32_t dRaw;
-    int32_t turn;
-    int32_t left;
-    int32_t right;
+    uint32_t now  = Tick_Ms();
+    int8_t   lean = MaskLean(mask);        /* -1 偏左, +1 偏右, 0 正中 */
+    int32_t  left  = (int32_t)s_baseSpeed;
+    int32_t  right = (int32_t)s_baseSpeed;
 
-    (void)mask;
+    /* 丢线之后判"刚才车正不正"要用它，跟用什么控制律无关，照旧维护 */
+    s_lastError = s_error;
 
-    /* 微分项先做一阶低通，滤掉控制周期抖动带来的假微分 */
-    dRaw = err - (int32_t)s_lastError;
-    s_lastError = (int16_t)err;
-    s_dError = (((int32_t)(TRACK_D_FILTER_DEN - 1u) * s_dError) + dRaw)
-             / (int32_t)TRACK_D_FILTER_DEN;
+    if (lean < 0) {
+        s_turnSide    = 0u;                       /* 线偏左 -> 修右轮 */
+        s_turnUntilMs = now + TRACK_TURN_MS;
+    } else if (lean > 0) {
+        s_turnSide    = 1u;                       /* 线偏右 -> 修左轮 */
+        s_turnUntilMs = now + TRACK_TURN_MS;
+    } else if ((s_turnSide != 0xFFu)
+               && ((int32_t)(now - s_turnUntilMs) < 0)) {
+        /* 已经回到正中，但这次修正还没做满最短时间 -> 做完它（否则会抖） */
+    } else {
+        s_turnSide = 0xFFu;                       /* 正中：直行 */
+    }
 
-    turn = (((int32_t)TRACK_KP * err) + ((int32_t)TRACK_KD * s_dError)) / 1000;
+    if (s_turnSide == 0u) {
+        right += TRACK_TURN_BOOST;                /* 加快右轮 */
+    } else if (s_turnSide == 1u) {
+        left  += TRACK_TURN_BOOST;                /* 加快左轮 */
+    }
 
-    left  = (int32_t)s_baseSpeed + turn;
-    right = (int32_t)s_baseSpeed - turn;
-
-    /* 外侧不超过满量程；内侧允许反转，急弯才转得过来 */
-    if (left > (int32_t)MOTOR_PWM_MAX)   { left  = (int32_t)MOTOR_PWM_MAX; }
-    if (right > (int32_t)MOTOR_PWM_MAX)  { right = (int32_t)MOTOR_PWM_MAX; }
-    if (left < -(int32_t)TRACK_REV_LIMIT)  { left  = -(int32_t)TRACK_REV_LIMIT; }
-    if (right < -(int32_t)TRACK_REV_LIMIT) { right = -(int32_t)TRACK_REV_LIMIT; }
+    /* 只封上限：这套规则里两轮都不会出现负速度（倒转交给 SHARP 状态） */
+    if (left  > (int32_t)MOTOR_PWM_MAX) { left  = (int32_t)MOTOR_PWM_MAX; }
+    if (right > (int32_t)MOTOR_PWM_MAX) { right = (int32_t)MOTOR_PWM_MAX; }
 
     Motor_SetLR((int16_t)left, (int16_t)right);
 }
 
-/* 十字 / 起跑线：锁定直行，别让 PD 在路口被某个读数带偏 */
+/* 十字 / 起跑线：锁定直行，别让转向修正在路口被某个读数带偏 */
 static void Control_Cross(uint32_t now)
 {
     if ((uint32_t)(now - s_stateMs) > TRACK_CROSS_MS) {
-        s_dError    = 0;
         s_lastError = 0;
         EnterState(TRACK_ST_RUN);
         return;
@@ -404,12 +663,16 @@ static void Control_Cross(uint32_t now)
     DriveForward((uint16_t)s_baseSpeed);
 }
 
-/* 强转：朝指定方向原地转，直到中间两路重新压线 */
+/* 强转：朝指定方向原地转，直到**正中间那一路**重新压到线 */
 static void Control_Sharp(uint32_t now, uint8_t mask)
 {
-    /* 中间两路任意一路重新压线，就说明已经咬住线了 */
-    if ((mask & 0x06u) != 0u) {
-        s_dError    = 0;
+    /* 退出判据是"正中间看到线了"，**不能**用 TRACK_MASK_MID（中间三路任意一路）。
+       因为进入强转的图形本身就含中间三路里的 S3 或 S5：
+       直角口那一路是 0x07（含 S3），用"任意一路"判的话，刚进强转就立刻退出，
+       车根本来不及转 —— 直角就转不过去。
+
+       4 路时 TRACK_MASK_CENTER 就是中间两路（S2+S3），和原来的行为一致。 */
+    if ((mask & TRACK_MASK_CENTER) != 0u) {
         s_lastError = s_error;
         EnterState(TRACK_ST_RUN);
         return;
@@ -447,7 +710,7 @@ static void Control_Lost(uint32_t now)
     SpinDir(s_lastSide);
 }
 
-/* 绕圆环：正常 PD + 朝环内的固定偏置，直到再次看到"丁字"就是出口 */
+/* 绕圆环：正常转向修正 + 朝环内的固定偏置，直到再次看到"丁字"就是出口 */
 static void Control_Ring(uint32_t now, uint8_t mask)
 {
     uint32_t inRing = (uint32_t)(now - s_stateMs);
@@ -455,7 +718,8 @@ static void Control_Ring(uint32_t now, uint8_t mask)
     /* 出口判据：进环待够 TRACK_RING_MIN_MS 之后，再次出现"丁字"图形。
        四路全黑的情形在 Track_Tick 里已经被拦下并转到 CROSS 了，
        那条路径同样会直行冲出去，正好也是我们要的动作。 */
-    if ((inRing > TRACK_RING_MIN_MS) && ((mask == 0x0Eu) || (mask == 0x07u))) {
+    if ((inRing > TRACK_RING_MIN_MS)
+        && ((mask == TRACK_RING_PAT_RIGHT) || (mask == TRACK_RING_PAT_LEFT))) {
         EnterState(TRACK_ST_CROSS);
         Control_Cross(now);
         return;
@@ -467,9 +731,9 @@ static void Control_Ring(uint32_t now, uint8_t mask)
         return;
     }
 
-    Control_Pd(mask);
+    Control_Turn(mask);
 
-    /* 在 PD 的结果上再加一点朝环内的固定偏置，让车老实贴着圆弧走。
+    /* 在转向修正的结果上再加一点朝环内的固定偏置，让车老实贴着圆弧走。
        方向不能搞反：
          环在右边 -> 要一直往右拐 -> 左轮加快、右轮减慢
          环在左边 -> 要一直往左拐 -> 左轮减慢、右轮加快
@@ -485,17 +749,17 @@ static void Control_Ring(uint32_t now, uint8_t mask)
     }
 }
 
-/* 圆环入口判据：正好三路压线的"丁字"图形。
+/* 圆环入口判据：正好三路压线（4 路）/ 中间加一侧三路（7 路）。
    返回 0 = 往左进环，1 = 往右进环，0xFF = 不是环入口。
    位序是 bit0=S1(最左) .. bit3=S4(最右)：
      0x07 = S1+S2+S3 压线、S4 空 -> 多出来的一支在左边 -> 左环
      0x0E = S2+S3+S4 压线、S1 空 -> 多出来的一支在右边 -> 右环 */
 static uint8_t Ring_EntryDir(uint8_t mask)
 {
-    if (mask == 0x07u) {
+    if (mask == TRACK_RING_PAT_LEFT) {
         return 0u;
     }
-    if (mask == 0x0Eu) {
+    if (mask == TRACK_RING_PAT_RIGHT) {
         return 1u;
     }
     return 0xFFu;
@@ -510,10 +774,11 @@ void Track_Tick(void)
     uint32_t now = Tick_Ms();
     uint8_t  mask;
     uint8_t  ringDir;
+    uint8_t  sharpDir;
     uint8_t  allBlack;
     uint8_t  allWhite;
 
-    /* 限频到 TRACK_CTRL_MS，让控制周期固定，PD 的微分项才有意义 */
+    /* 限频到 TRACK_CTRL_MS，让控制周期固定，转向修正才有一致的节奏 */
     if ((uint32_t)(now - s_lastCtrlMs) < TRACK_CTRL_MS) {
         return;
     }
@@ -522,8 +787,14 @@ void Track_Tick(void)
     Sensor_Update();
     mask = s_stable;
 
-    /* 只要不是全黑，就说明车已经离开了横线，可以接受下一次计圈 */
-    if (mask != 0x0Fu) {
+    /* 只要不是"十字图形"（横线/起跑线），就说明车已经离开了横线，
+       可以接受下一次计圈。十字图形读成什么由 TRACK_CROSS_GAP_SWAPPED 决定
+       （七路实测是全白）。 */
+#if TRACK_CROSS_GAP_SWAPPED
+    if (mask != 0x00u) {
+#else
+    if (mask != TRACK_MASK_ALL) {
+#endif
         s_markArmed = 1u;
     }
 
@@ -536,10 +807,21 @@ void Track_Tick(void)
 
     UpdateLastSide(mask);
 
-    allBlack = (uint8_t)(mask == 0x0Fu);
+    allBlack = (uint8_t)(mask == TRACK_MASK_ALL);
     allWhite = (uint8_t)(mask == 0x00u);
 
-    /* ---------------- 全局优先事件：四路全黑 ---------------- */
+#if TRACK_CROSS_GAP_SWAPPED
+    /* ⚠ 七路实测："十字"读成全白、"断线"读成全黑，把两个变量的含义对调。
+       下面的触发代码一行都不用改：allBlack 现在代表"十字图形（全白）"，
+       allWhite 代表"断线图形（全黑）"。 */
+    {
+        uint8_t t = allBlack;
+        allBlack  = allWhite;
+        allWhite  = t;
+    }
+#endif
+
+    /* ---------------- 全局优先事件：十字 / 起跑线 ---------------- */
     /* 十字路口和起跑线的传感器特征完全一样，处理办法也一样：
        先判要不要计圈，然后锁定直行冲过去。 */
     if ((allBlack != 0u) && (s_state != TRACK_ST_CROSS)) {
@@ -555,7 +837,7 @@ void Track_Tick(void)
                否则 EnterState() 记下的时刻会比 now 还新，
                Control_Cross() 里 (now - s_stateMs) 一减就变成一个巨大的
                无符号数，十字直行会被立刻判定为超时，车还没过路口就交还
-               给 PD 了。 */
+               给转向修正了。 */
             now = Tick_Ms();
         }
         EnterState(TRACK_ST_CROSS);
@@ -584,7 +866,6 @@ void Track_Tick(void)
 
     case TRACK_ST_LOST:
         if (allWhite == 0u) {
-            s_dError    = 0;
             s_lastError = s_error;
             EnterState(TRACK_ST_RUN);
         } else {
@@ -611,9 +892,13 @@ void Track_Tick(void)
             break;
         }
 
-        /* 圆环入口：连续几拍都是"丁字"图形才认，避免斜着压线误判 */
+        /* 圆环入口：连续几拍都是"丁字"图形才认，避免斜着压线误判。
+           这里数的是**未经消抖的原始读数** —— 和直角那条一样的原因：
+           消抖后的值要 3 次调用才更新，而刷 OLED 会把主循环卡十几毫秒，
+           跑起来时"丁字"图形根本活不到那时候，圆环就永远进不去。
+           数原始读数仍然要求连续 3 拍，抗毛刺的能力没有丢。 */
         if (s_ringEnable != 0u) {
-            ringDir = Ring_EntryDir(mask);
+            ringDir = Ring_EntryDir(s_raw);
             if (ringDir != 0xFFu) {
                 s_ringTicks++;
                 if (s_ringTicks >= 3u) {
@@ -628,15 +913,28 @@ void Track_Tick(void)
             }
         }
 
-        /* 只剩最外侧一路压线：线急转走了，原地强转跟上 */
-        if ((mask == 0x01u) || (mask == 0x08u)) {
-            s_turnDir = (uint8_t)((mask == 0x01u) ? 0u : 1u);
+        /* 直角 / 折线：**一侧整排全黑、正中间空** -> 原地 90° 强转跟上。
+           位置要在圆环判据**后面**：0x0F / 0x78 那种"正中间还压着"的图形
+           说明主线还在，那是 T 字路口/圆环入口，归圆环那套管；
+           这里只管"前面已经没线了、线拐到一边去"的拐角。 */
+        sharpDir = Sharp_EntryDir(mask);
+        if (sharpDir != 0xFFu) {
+            s_turnDir = sharpDir;
             EnterState(TRACK_ST_SHARP);
             Control_Sharp(now, mask);
             break;
         }
 
-        Control_Pd(mask);
+        /* 只剩最外侧一路压线：比整排全黑还偏，同样原地强转。
+           路数变了这里自动跟着走：bit0 = S1(最左)，bit(N-1) = SN(最右)。 */
+        if ((mask == (uint8_t)BIT(0)) || (mask == (uint8_t)BIT(TRACK_SENSOR_COUNT - 1u))) {
+            s_turnDir = (uint8_t)((mask == (uint8_t)BIT(0)) ? 0u : 1u);
+            EnterState(TRACK_ST_SHARP);
+            Control_Sharp(now, mask);
+            break;
+        }
+
+        Control_Turn(mask);
         break;
     }
 }
@@ -663,8 +961,9 @@ void Track_Start(void)
     s_markArmed  = 0u;      /* 起跑线本身不该被算成一圈 */
     s_error      = 0;
     s_lastError  = 0;
-    s_dError     = 0;
     s_ringTicks  = 0u;
+    s_turnSide   = 0xFFu;
+    s_turnUntilMs = 0u;
 
     EnterState(TRACK_ST_RUN);
 }
@@ -677,11 +976,12 @@ void Track_Stop(void)
         s_elapsedMs = (uint32_t)(Tick_Ms() - s_startMs);
     }
 
-    s_state     = TRACK_ST_IDLE;
-    s_error     = 0;
-    s_lastError = 0;
-    s_dError    = 0;
-    s_ringTicks = 0u;
+    s_state      = TRACK_ST_IDLE;
+    s_error      = 0;
+    s_lastError  = 0;
+    s_ringTicks  = 0u;
+    s_turnSide   = 0xFFu;
+    s_turnUntilMs = 0u;
 }
 
 /* ================================================================== */
@@ -802,17 +1102,18 @@ const char *Track_StateTag(void)
     }
 }
 
-/* 串口用的位串，bit3 打在左边，也就是 "S1S2S3S4" 的顺序 ——
-   和 OLED 上从左到右看到的顺序一致，对着屏幕就能核对。 */
+/* 串口用的位串，S1(最左) 打在左边，也就是 "S1S2..SN" 的顺序 ——
+   和 OLED 上从左到右看到的顺序一致，对着屏幕就能核对。
+   4 路时是 4 个字符（例如 "0110"），7 路时是 7 个（例如 "0011100"）。 */
 const char *Track_BitsText(void)
 {
-    static char str[5];
+    static char str[TRACK_SENSOR_COUNT + 1u];
     uint8_t i;
 
-    for (i = 0u; i < 4u; i++) {
-        str[i] = ((s_stable & (uint8_t)(0x8u >> i)) != 0u) ? '1' : '0';
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
+        str[i] = ((s_stable & (uint8_t)(1u << i)) != 0u) ? '1' : '0';
     }
-    str[4] = '\0';
+    str[TRACK_SENSOR_COUNT] = '\0';
 
     return str;
 }
@@ -825,13 +1126,12 @@ void Track_Init(void)
 {
     uint8_t i;
 
-    /* PB12..PB15 配成上拉输入：有些灰度模块的输出是开集电极的，
-       没有上拉会一直读到 0，四个全"压线"，非常误导。 */
-    for (i = 0u; i < 4u; i++) {
-        uint8_t pin = (uint8_t)(TRACK_PIN_S1 + i);
-
-        GPIO_ConfigPin(TRACK_PORT, pin, GPIO_CFG_IN_PUPD);
-        TRACK_PORT->BSRR = BIT(pin);        /* ODR 置 1 = 选上拉 */
+    /* 循迹传感器全部配成上拉输入：有些灰度模块的输出是开集电极的，
+       没有上拉会一直读到 0，全都"压线"，非常误导。
+       引脚来自 g_trackSensorPins[]，所以 4 路 / 7 路、以后改脚都只改那一张表。 */
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
+        GPIO_ConfigPin(g_trackSensorPins[i].port, g_trackSensorPins[i].pin, GPIO_CFG_IN_PUPD);
+        g_trackSensorPins[i].port->BSRR = BIT(g_trackSensorPins[i].pin);   /* ODR 置 1 = 上拉 */
     }
 
     s_state      = TRACK_ST_IDLE;
@@ -841,11 +1141,12 @@ void Track_Init(void)
     s_candCount  = 0u;
     s_error      = 0;
     s_lastError  = 0;
-    s_dError     = 0;
     s_lastSide   = 0u;
     s_turnDir    = 0u;
     s_ringDir    = 0u;
     s_ringTicks  = 0u;
+    s_turnSide   = 0xFFu;
+    s_turnUntilMs = 0u;
     s_lastCtrlMs = 0u;
     s_stateMs    = 0u;
     s_startMs    = 0u;

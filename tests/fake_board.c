@@ -3,12 +3,14 @@
 #include "fake_board.h"
 
 /* 三个 GPIO 口的内存替身。
-   GPIOB 的输入寄存器初值给全 1，是为了模拟真板子的上拉：没接东西、
-   或者传感器输出高（没看见黑线）的时候，引脚读到的就是高电平。
-   如果这里留 0，PB12..15 会被当成"四路全黑"，一上电就进十字状态，
-   测试结果会和板子上完全对不上。 */
+   输入寄存器初值给全 1，是为了模拟真板子的上拉：没接东西、或者传感器
+   输出高（没看见黑线）的时候，引脚读到的就是高电平。
+   如果这里留 0，传感器脚会被当成"全黑"，一上电就进十字状态，
+   测试结果会和板子上完全对不上。
+
+   GPIOA 也要给 1：七路灰度里 S5/S6 挂在 PA6/PA7 上。 */
 GPIO_TypeDef fake_gpio[3] = {
-    { 0u, 0u, 0x00000000u, 0u, 0u, 0u, 0u },
+    { 0u, 0u, 0x0000FFFFu, 0u, 0u, 0u, 0u },
     { 0u, 0u, 0x0000FFFFu, 0u, 0u, 0u, 0u },
     { 0u, 0u, 0x00000000u, 0u, 0u, 0u, 0u }
 };
@@ -128,31 +130,54 @@ void Board_BeepWrite(uint8_t on)
 
 #include "track.h"
 
+/* 把"第 i 路压线"翻译成对应引脚的电平，逐路写进假 IDR。
+   引脚表直接引用固件里的 g_trackSensorPins[]，所以 4 路 / 7 路、
+   以后改接线都不用动这里，两边永远一致。 */
+static void write_levels(uint8_t v)
+{
+    uint8_t i;
+
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
+        uint32_t bit = BIT(g_trackSensorPins[i].pin);
+
+        if ((v & (uint8_t)(1u << i)) != 0u) {
+            g_trackSensorPins[i].port->IDR |= bit;
+        } else {
+            g_trackSensorPins[i].port->IDR &= ~bit;
+        }
+    }
+}
+
 void fake_sensor_set(uint8_t bits)
 {
-    uint8_t  v = bits;
-    uint32_t idr;
+    uint8_t v = bits;
 
 #if TRACK_REVERSE
-    /* 逆变换：先把固件里那次 bit 对调还原回去 */
-    v = (uint8_t)(((v & 0x1u) << 3) | ((v & 0x2u) << 1)
-                | ((v & 0x4u) >> 1) | ((v & 0x8u) >> 3));
+    /* 逆变换：先把固件里那次左右对调还原回去 */
+    {
+        uint8_t r = 0u;
+        uint8_t i;
+
+        for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
+            if ((v & (uint8_t)(1u << i)) != 0u) {
+                r |= (uint8_t)(1u << (TRACK_SENSOR_COUNT - 1u - i));
+            }
+        }
+        v = r;
+    }
 #endif
 
 #if TRACK_BLACK_IS_LOW
     /* 固件把"低电平"取反成"压线"，这里就先取反写回去 */
-    v = (uint8_t)(~v & 0x0Fu);
+    v = (uint8_t)(~v & (uint8_t)((1u << TRACK_SENSOR_COUNT) - 1u));
 #endif
 
-    idr = ((uint32_t)v & 0x0Fu) << 12u;
-    GPIOB->IDR = (GPIOB->IDR & ~(0x0Fu << 12u)) | idr;
+    write_levels(v);
 }
 
-/* 直接写 PB12..PB15 的原始电平。只有"验证极性宏本身对不对"那一组测试用得到，
+/* 直接写传感器引脚的原始电平。只有"验证极性宏本身对不对"那一组测试用得到，
    其它测试一律用上面的 fake_sensor_set()。 */
 void fake_sensor_set_levels(uint8_t levels)
 {
-    uint32_t v = ((uint32_t)levels & 0x0Fu) << 12u;
-
-    GPIOB->IDR = (GPIOB->IDR & ~(0x0Fu << 12u)) | v;
+    write_levels(levels);
 }

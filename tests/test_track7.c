@@ -248,10 +248,6 @@ static void test_gap_and_lost(void)
 
     drive_with(M_ALL, 400u);
     expect(Track_State() == TRACK_ST_LOST, "gap not cleared -> LOST");
-    expect(Motor_GetLeft() > 0 && Motor_GetRight() > 0,
-           "in LOST it searches FORWARD (the line is straight ahead)");
-    expect(Motor_GetLeft() == Motor_GetRight(),
-           "and both wheels stay equal (no default left spin)");
 
     drive_with(M_CEN, 200u);
     expect(Track_State() == TRACK_ST_RUN, "line found -> back to RUN");
@@ -316,30 +312,34 @@ static void enter_trace_page(void)
     Menu_Draw();
 }
 
-/* 断线后找线方向：直着丢的线（刚才车是正的）在**正前方**，要慢慢往前找。
-   不能原地往"最后看到线的一侧"转 —— s_lastSide 在对称接近时一直是默认值 0
-   （左），原地转会变成"每次断线都左拐"。这一组就是守这个的。 */
-static void test_lost_search(void)
+/* 中间那一路（S4）不该被算进"左"或"右"的任何一边。
+   如果把 S4 算进右边，车在直线上（只有 S4 压线）就会被判成"线在右边"，
+   以后一丢线就永远往右转 —— 这一组就是守这个的。 */
+static void test_last_side_symmetry(void)
 {
-    printf("\n--- L. 断线后往前找线（不再默认左拐）------------------------\n");
+    printf("\n--- L. 丢线方向：中间那一路不该把最后一侧带偏 -----------------\n");
 
-    /* 先故意在"线偏左"的状态跑一会儿（把 s_lastSide 扰动成左），
-       再回正中，再断线 —— 找线仍然必须**往前**，不能被"最后一侧"带跑 */
+    /* ① 先在"线偏左"的状态跑一会儿，把 s_lastSide 置成"左" */
     launch((uint8_t)(M_S1 | M_S2), 0u);
     drive_with((uint8_t)(M_S1 | M_S2), 200u);
+
+    /* ② 再回到正中（只有 S4 压线）：这一步不该改变"最后一侧" */
     drive_with(M_CEN, 200u);
 
+    /* ③ 丢线（全黑 = 断线，现场实测判据已对调）：先进 GAP 直冲，之后进 LOST 要往**左**找 */
     drive_with(M_ALL, 700u);
-    expect(Track_State() == TRACK_ST_LOST, "line lost while straight -> LOST");
-    expect(Motor_GetLeft() > 0 && Motor_GetRight() > 0,
-           "searches FORWARD, not the default left spin");
-    expect(Motor_GetLeft() == Motor_GetRight(),
-           "and both wheels are equal (going straight)");
-    expect(Motor_GetLeft() == 900,
-           "at TRACK_SEARCH_FORWARD_SPEED");
+    expect(Track_State() == TRACK_ST_LOST, "line lost -> LOST");
+    expect(Motor_GetLeft() < 0,
+           "was on the LEFT then centred -> search spins LEFT");
 
+    /* 反过来：先在"线偏右"的状态，再回正中，丢线后应该往右找 */
+    launch((uint8_t)(M_S6 | M_S7), 0u);
+    drive_with((uint8_t)(M_S6 | M_S7), 200u);
     drive_with(M_CEN, 200u);
-    expect(Track_State() == TRACK_ST_RUN, "line found -> back to RUN");
+    drive_with(M_ALL, 700u);
+    expect(Track_State() == TRACK_ST_LOST, "line lost -> LOST (other side)");
+    expect(Motor_GetRight() < 0,
+           "was on the RIGHT then centred -> search spins RIGHT");
 }
 
 /* 新的转向策略：中间几路直行；偏到哪一侧就把另一侧的轮子加快"一段时间"。
@@ -626,7 +626,7 @@ int main(void)
     test_gap_and_lost();
     test_ring_entry();
     test_lap_still_works();
-    test_lost_search();
+    test_last_side_symmetry();
     test_turn_pulse();
     test_centre_neighbours();
     test_straddling_pairs();

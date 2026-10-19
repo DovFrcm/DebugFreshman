@@ -73,10 +73,6 @@ static const uint16_t T_UPTIME[]     = { CN_YUN, CN_XING, 0 };
 /* 巡线控制面板（题目 4 的主界面）。
    注意标题不能叫 T_TRACE —— 上面主菜单那一项已经占了这个名字。 */
 static const uint16_t T_TRACE_TITLE[] = { CN_XUN, CN_XIAN2, 0 };         /* 巡线 */
-static const uint16_t T_S1[]         = { 'S', '1', 0 };
-static const uint16_t T_S2[]         = { 'S', '2', 0 };
-static const uint16_t T_S3[]         = { 'S', '3', 0 };
-static const uint16_t T_S4[]         = { 'S', '4', 0 };
 static const uint16_t T_ELAPSED[]    = { CN_YONG, CN_SHI3, 0 };         /* 用时 */
 static const uint16_t T_SPEED[]      = { CN_SU, 0 };                    /* 速   */
 static const uint16_t T_LAP[]        = { CN_QUAN, 0 };                  /* 圈   */
@@ -762,6 +758,36 @@ static const MenuPageOps kLedPageOps = {
  *   第 6 行  K1启停  K4返回
  * ------------------------------------------------------------------ */
 
+/* ---- 第 2 行传感器指示的排版：跟着 TRACK_SENSOR_COUNT 走 ----
+   4 路时每格 32 像素，标签写 "S1".."S4"（和原来完全一样）；
+   7 路时每格只有 18 像素，两个字符放不下，标签缩成 "1".."7"。
+   算一下：7 x 18 = 126 像素，最后那个框落在 118..127，正好不出屏。 */
+#if TRACK_SENSOR_COUNT <= 4
+#define TRACE_SENSOR_SLOT_W   32u
+#define TRACE_SENSOR_BOX_DX   17u
+#else
+#define TRACE_SENSOR_SLOT_W   18u
+#define TRACE_SENSOR_BOX_DX    8u
+#endif
+
+/* 第 i 路的编号标签（i 从 0 开始）。用静态缓冲拼一位数字，
+   调用方拿到就立刻画出去，不需要保存。 */
+static const uint16_t *TracePage_SensorLabel(uint8_t i)
+{
+    static uint16_t buf[3];
+    uint8_t n = 0u;
+
+#if TRACK_SENSOR_COUNT <= 4
+    buf[n] = (uint16_t)'S';
+    n++;
+#endif
+    buf[n] = (uint16_t)('1' + i);
+    n++;
+    buf[n] = 0u;
+
+    return buf;
+}
+
 /* 画一个 10 x 14 的传感器指示框：空心 = 没压线，实心 = 压到黑线。
    实心和空心差别足够大，考核的人站在一米外也能一眼看出是哪一路在变。 */
 static void TracePage_DrawSensorBox(uint8_t x, uint8_t page, uint8_t filled)
@@ -889,20 +915,14 @@ static void TracePage_Draw(void)
     OLED_DrawTextRight(126u, 0u, Val_TrackLap());
     OLED_DrawTextRight((uint8_t)(126u - lapW - 4u), 0u, T_LAP);
 
-    /* 第 2 行：四路传感器。bit0 = S1(最左) .. bit3 = S4(最右)，
+    /* 第 2 行：传感器阵列。bit0 = S1(最左) .. bit(N-1) = SN(最右)，
        和屏幕上从左到右的顺序一致，对着传感器排就能核对。 */
-    for (i = 0u; i < 4u; i++) {
-        uint8_t sx = (uint8_t)(2u + (i * 32u));
+    for (i = 0u; i < TRACK_SENSOR_COUNT; i++) {
+        uint8_t sx = (uint8_t)(2u + (i * TRACE_SENSOR_SLOT_W));
         uint8_t filled = (uint8_t)(((mask & (uint8_t)(1u << i)) != 0u) ? 1u : 0u);
 
-        switch (i) {
-        case 0u:  OLED_DrawText(sx, 2u, T_S1); break;
-        case 1u:  OLED_DrawText(sx, 2u, T_S2); break;
-        case 2u:  OLED_DrawText(sx, 2u, T_S3); break;
-        default:  OLED_DrawText(sx, 2u, T_S4); break;
-        }
-
-        TracePage_DrawSensorBox((uint8_t)(sx + 17u), 2u, filled);
+        OLED_DrawText(sx, 2u, TracePage_SensorLabel(i));
+        TracePage_DrawSensorBox((uint8_t)(sx + TRACE_SENSOR_BOX_DX), 2u, filled);
     }
 
     /* 第 4 行：用时（题目 4b 要求在屏幕上显示本圈用时） + 当前速度 */
