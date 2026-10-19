@@ -682,7 +682,7 @@ static uint8_t Mark_IsLap(uint32_t now)
 ## 5. 调参指南（照着顺序做）
 
 > ⚠️ **最重要的一句话**：纯软件的逻辑（状态机、计圈、串口协议、屏幕绘制）
-> **已经在电脑上测过 252 项、全部通过**（见[第 7 章](#7-电脑上跑测试不用开发板)）。
+> **已经在电脑上测过 249 项、全部通过**（见[第 7 章](#7-电脑上跑测试不用开发板)）。
 > 但**物理常数必须上真赛道调**：
 > `TRACK_TURN_MS` / `TRACK_TURN_BOOST`、基础速度、`TRACK_LAP_MIN_MS`、
 > 圆环的入口图形与偏置、`TRACK_CROSS_MS` / `TRACK_GAP_MS` 这几个时间……
@@ -972,7 +972,7 @@ powershell -File tools\run_tests.ps1
 5. 调用 `tools\renderscreens.ps1`，把输出里的字符画显存渲染成 PNG，存到 `tests\screens\`；
 6. **全部通过时退出码 0**（`RESULT: all tests passed`），有失败就退出码 1。
 
-合计 **252 项检查**，当前是 **0 failures**。
+合计 **249 项检查**，当前是 **0 failures**。
 
 > 路数宏可以被编译命令覆盖（`-DTRACK_SENSOR_COUNT=n`），`track.h` 里写的是
 > `#ifndef` 保护的默认值 **7**。所以同一份源码能分别按 4 路和 7 路各测一遍。
@@ -1182,7 +1182,7 @@ static const MenuPage kMyPage = { kMyItems, 2u, 0 };
 | 电机方向 | `MOTOR_A_IS_LEFT` / `MOTOR_A_INVERT` / `MOTOR_B_INVERT` | 取决于实际接线，**装车后第一件事就是验它** |
 
 **已经由电脑测试保证的部分**：状态机的跳转逻辑、计圈的两道闸门、蜂鸣器响的次数、
-屏幕四行的内容、串口协议的解析、TIM4 寄存器配置 —— 这 252 项检查全过。
+屏幕四行的内容、串口协议的解析、TIM4 寄存器配置 —— 这 249 项检查全过。
 **所以调车时如果行为完全不讲道理（比如响都不响），先跑一遍 `run_tests.ps1` 排除软件问题。**
 
 ---
