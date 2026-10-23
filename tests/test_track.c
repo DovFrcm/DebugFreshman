@@ -270,6 +270,8 @@ static void test_sharp_turn(void)
 
     expect(Track_State() == TRACK_ST_SHARP,
            "only the outermost sensor -> SHARP state (spin to catch the line)");
+
+    drive_with(0x01u, 100u);                     /* 越过可能存在的直行阶段 */
     expect(Motor_GetLeft() < 0 && Motor_GetRight() > 0,
            "S1 only (line went left) -> spin LEFT: left wheel reverses");
 
@@ -281,6 +283,8 @@ static void test_sharp_turn(void)
     /* 另一边 */
     drive_with(0x08u, 20u);
     expect(Track_State() == TRACK_ST_SHARP, "S4 only -> SHARP again");
+
+    drive_with(0x08u, 100u);
     expect(Motor_GetLeft() > 0 && Motor_GetRight() < 0,
            "S4 only (line went right) -> spin RIGHT: right wheel reverses");
 

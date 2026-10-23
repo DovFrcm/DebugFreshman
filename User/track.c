@@ -75,11 +75,13 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
      TRACK_SEARCH_SPEED 丢线后原地找线（LOST）
      TRACK_GAP_SPEED    断线直冲（GAP）
      TRACK_RING_BIAS    绕环朝环内侧的固定偏置（RING，加在一侧轮子上）
+     TRACK_SHARP_STRAIGHT_SPEED 转弯前先直行一小段的速度（Sharp_Straight）
    直线巡线的修正量不在这里，在下面的 TRACK_TURN_MS / TRACK_TURN_BOOST。 */
 #define TRACK_SPIN_SPEED        1500
 #define TRACK_SEARCH_SPEED      1300
 #define TRACK_GAP_SPEED         1500
 #define TRACK_RING_BIAS         650
+#define TRACK_SHARP_STRAIGHT_SPEED 900
 
 /* ---- 正常循迹的转向修正（中间直行 + 偏了就加速另一侧轮子）---- */
 
@@ -118,14 +120,19 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
      刚才车是正的、线突然没了  -> 多半是直线上的缺口，直冲过去
      刚才车正在大角度转弯      -> 是直角/急弯，线拐走了，必须原地转
    不区分的话，直角弯上会先傻冲 170 ms，直接冲出赛道。 */
-#define TRACK_GAP_CENTER_ERR    130
+#define TRACK_GAP_CENTER_ERR    160
 
 /* 原地找线找多久还没找到就放弃停车（0 = 不超时）。
    找线用的速度见下面"转弯速度"区的 TRACK_SEARCH_SPEED。 */
 #define TRACK_SEARCH_TIMEOUT_MS 3000u
 
 /* 强转超时：直角/折线最多转这么久。超时说明线真的没了，转去找线。 */
-#define TRACK_SHARP_TIMEOUT_MS  1200u
+#define TRACK_SHARP_TIMEOUT_MS  1700u
+
+/* 转弯前先**直行一小段**多久（Sharp_Straight 用的时长）。
+   刚识别到直角时车头还压着拐角，先直行把车头冲出路口再原地转，
+   转的角度更小、总转弯时间更短。给 0 就恢复成"识别到立刻原地转"。 */
+#define TRACK_SHARP_STRAIGHT_MS 0u
 
 /* ---- 计圈 / 起跑线 ---- */
 
@@ -199,17 +206,34 @@ static const int16_t s_pos[TRACK_SENSOR_COUNT] = { -300, -100, 100, 300 };
    那段注释 —— 直线上一般两路同时压线，常常是 S3+S4 / S4+S5 这种跨中线的
    图形，用"有没有"判会把它们误判成正中。 */
 
-/* 圆环入口的"丁字"图形：主线还在（中间那路压着），一侧多出一支。
-   4 路时是"正好三路压线"：0x07 = S1+S2+S3（左）、0x0E = S2+S3+S4（右）。
-   7 路时中间是 S4，所以左边一支亮 S1~S3、右边一支亮 S5~S7。
-   ⚠ 这两个值最好现场校准：把车停在六边形环的入口，看串口 SENSORS 读出来
-     的图形，把它填到这里。填错了表现为"进不去环"或"直线也误入环"。 */
+/* 圆环图形判据（现场实测 2026-10：赛道上全部是左圆环）。
+   7 路实测图形（比原来的整排全亮放宽）：
+     进环 = S1+S4 压线，且 S2 或 S3 至少一路压线
+     出环 = S7+S4 压线，且 S6 或 S5 至少一路压线
+   4 路配置退回原来的整排图形（0x07 左 / 0x0E 右）。
+   ⚠ 换传感器高度/位置后仍建议拿串口 SENSORS 对一遍再改。 */
 #if TRACK_SENSOR_COUNT >= 7
-#define TRACK_RING_PAT_LEFT     0x0Fu   /* S1+S2+S3+S4：多出来的一支在左 */
-#define TRACK_RING_PAT_RIGHT    0x78u   /* S4+S5+S6+S7：多出来的一支在右 */
+/* 进环（现场实测，全部左环）：S1+S4 压线，且 S2 或 S3 至少一路压线 */
+static uint8_t Ring_IsEntry(uint8_t mask)
+{
+    return (uint8_t)((((mask & 0x09u) == 0x09u) && ((mask & 0x06u) != 0u)) ? 1u : 0u);
+}
+/* 出环（现场实测）：S7+S4 压线，且 S6 或 S5 至少一路压线 */
+static uint8_t Ring_IsExit(uint8_t mask)
+{
+    return (uint8_t)((((mask & 0x48u) == 0x48u) && ((mask & 0x30u) != 0u)) ? 1u : 0u);
+}
 #else
 #define TRACK_RING_PAT_LEFT     0x07u   /* S1+S2+S3 */
 #define TRACK_RING_PAT_RIGHT    0x0Eu   /* S2+S3+S4 */
+static uint8_t Ring_IsEntry(uint8_t mask)
+{
+    return (uint8_t)(mask == TRACK_RING_PAT_LEFT);
+}
+static uint8_t Ring_IsExit(uint8_t mask)
+{
+    return (uint8_t)((mask == TRACK_RING_PAT_LEFT) || (mask == TRACK_RING_PAT_RIGHT));
+}
 #endif
 
 /* ================================================================== */
@@ -683,6 +707,36 @@ static void Control_Cross(uint32_t now)
     DriveForward((uint16_t)s_baseSpeed);
 }
 
+/* ================================================================== */
+/* 转弯专用的直行阶段：进 SHARP 后先直行一小段，把车头冲出路口再原地转 */
+/* ================================================================== */
+/* 在状态机的 case TRACK_ST_SHARP 里、Control_Sharp 之前调用。
+   返回 1 = 直行阶段结束，可以开始原地转了；返回 0 = 还在直行中（本拍到此为止）。
+
+   为什么单独拆一个函数而不是塞进 Control_Sharp：
+     直行和原地转是两个独立的动作，分开写每段只管一件事，
+     以后要加"直行中途的退出/超时/转向"逻辑都只动这一个函数。 */
+static uint8_t Sharp_Straight(uint32_t now, uint8_t mask)
+{
+    /* 直行途中正中间已经压到线（线自己回到正前方了）-> 不用转了，回巡线 */
+    // if ((mask & TRACK_MASK_CENTER) != 0u) {
+    //     EnterState(TRACK_ST_RUN);
+    //     return 0u;
+    // }
+
+#if TRACK_SHARP_STRAIGHT_MS > 0u
+    if ((uint32_t)(now - s_stateMs) < TRACK_SHARP_STRAIGHT_MS) {
+        DriveForward((uint16_t)TRACK_SHARP_STRAIGHT_SPEED);
+        return 0u;
+    }
+#else
+    (void)now;
+    (void)mask;
+#endif
+
+    return 1u;
+}
+
 /* 强转：朝指定方向原地转，直到**正中间那一路**重新压到线 */
 static void Control_Sharp(uint32_t now, uint8_t mask)
 {
@@ -735,11 +789,9 @@ static void Control_Ring(uint32_t now, uint8_t mask)
 {
     uint32_t inRing = (uint32_t)(now - s_stateMs);
 
-    /* 出口判据：进环待够 TRACK_RING_MIN_MS 之后，再次出现"丁字"图形。
-       四路全黑的情形在 Track_Tick 里已经被拦下并转到 CROSS 了，
-       那条路径同样会直行冲出去，正好也是我们要的动作。 */
-    if ((inRing > TRACK_RING_MIN_MS)
-        && ((mask == TRACK_RING_PAT_RIGHT) || (mask == TRACK_RING_PAT_LEFT))) {
+    /* 出口判据：进环待够 TRACK_RING_MIN_MS 之后，再看到出环图形。
+       现场实测（全部左环）：出环 = S7+S4 且 (S6 或 S5)，见 Ring_IsExit。 */
+    if ((inRing > TRACK_RING_MIN_MS) && (Ring_IsExit(mask) != 0u)) {
         EnterState(TRACK_ST_CROSS);
         Control_Cross(now);
         return;
@@ -776,12 +828,19 @@ static void Control_Ring(uint32_t now, uint8_t mask)
      0x0E = S2+S3+S4 压线、S1 空 -> 多出来的一支在右边 -> 右环 */
 static uint8_t Ring_EntryDir(uint8_t mask)
 {
-    if (mask == TRACK_RING_PAT_LEFT) {
+#if TRACK_SENSOR_COUNT >= 7
+    /* 现场实测：全部是左圆环，只判左环图形（Ring_IsEntry） */
+    if (Ring_IsEntry(mask) != 0u) {
+        return 0u;
+    }
+#else
+    if (Ring_IsEntry(mask) != 0u) {
         return 0u;
     }
     if (mask == TRACK_RING_PAT_RIGHT) {
         return 1u;
     }
+#endif
     return 0xFFu;
 }
 
@@ -877,6 +936,11 @@ void Track_Tick(void)
         break;
 
     case TRACK_ST_SHARP:
+        /* 转弯前先直行一小段（单独函数）：还在直行 -> 本拍到此为止 */
+        if (Sharp_Straight(now, mask) == 0u) {
+            break;
+        }
+        /* 直行结束 -> 开始原地强转 */
         Control_Sharp(now, mask);
         break;
 

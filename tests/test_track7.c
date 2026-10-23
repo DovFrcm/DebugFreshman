@@ -255,17 +255,30 @@ static void test_gap_and_lost(void)
 
 static void test_ring_entry(void)
 {
-    printf("\n--- I. 圆环入口：七位下的丁字图形 -----------------------------\n");
+    printf("\n--- I. 圆环：进环 / 出环判据（现场实测，全部左环）------------\n");
 
+    /* 进环：0x0F（S1..S4）满足"S1+S4 且 S2/S3" -> 左环 */
     launch(M_CEN, 1u);              /* 圆环打开 */
     drive_with(M_CEN, 400u);
     drive_with(M_RING_L, 200u);
     expect(Track_State() == TRACK_ST_RING, "0x0F (S1..S4) -> RING (left ring)");
 
+    /* 0x78 现在只是**出环**图形，不再作为进环判据（全部是左环） */
     launch(M_CEN, 1u);
     drive_with(M_CEN, 400u);
     drive_with(M_RING_R, 200u);
-    expect(Track_State() == TRACK_ST_RING, "0x78 (S4..S7) -> RING (right ring)");
+    expect(Track_State() != TRACK_ST_RING,
+           "0x78 is the EXIT pattern now, NOT an entry (all rings are left)");
+
+    /* 出环：环内待够 TRACK_RING_MIN_MS 后，读到 (S7+S4 且 S5/S6) -> 出环 */
+    launch(M_CEN, 1u);
+    drive_with(M_CEN, 400u);
+    drive_with(M_RING_L, 40u);
+    expect(Track_State() == TRACK_ST_RING, "entered the left ring");
+    drive_with(M_CEN, 800u);                    /* 环内巡线，超过 RING_MIN_MS */
+    drive_with((uint8_t)(M_S7 | M_CEN | M_S5), 40u);   /* S7+S4+S5 = 0x58 出环图形 */
+    expect(Track_State() == TRACK_ST_CROSS,
+           "exit pattern (S7+S4 and S5) -> leaves the ring (CROSS)");
 
     /* 圆环关掉时同样的图形不能进环，而是按普通转向处理 */
     launch(M_CEN, 0u);
@@ -516,8 +529,10 @@ static void test_right_angle(void)
     drive_with(M_L3, 40u);                       /* 0x07 = S1+S2+S3 */
     expect(Track_State() == TRACK_ST_SHARP,
            "S1+S2+S3 whole left row black, centre clear -> SHARP");
+
+    drive_with(M_L3, 100u);                      /* 越过可能存在的直行阶段 */
     expect(Motor_GetLeft() < 0,
-           "and it pivots LEFT in place (left wheel reverses)");
+           "then it pivots LEFT in place (left wheel reverses)");
 
     /* 转到位：中间几路重新压到线 -> 交还给巡线 */
     drive_with(M_MID, 40u);
@@ -529,7 +544,9 @@ static void test_right_angle(void)
     drive_with(M_R3, 40u);                       /* 0x70 = S5+S6+S7 */
     expect(Track_State() == TRACK_ST_SHARP,
            "S5+S6+S7 whole right row black -> SHARP");
-    expect(Motor_GetRight() < 0, "and it pivots RIGHT in place");
+
+    drive_with(M_R3, 100u);
+    expect(Motor_GetRight() < 0, "then it pivots RIGHT in place");
 
     /* 只压一两路是**漂移**不是拐角 -> 必须还是温和修正，不能原地转 */
     launch(M_CEN, 0u);
