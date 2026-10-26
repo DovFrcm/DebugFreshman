@@ -78,7 +78,7 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
      TRACK_SHARP_STRAIGHT_SPEED 转弯前先直行一小段的速度（Sharp_Straight）
    直线巡线的修正量不在这里，在下面的 TRACK_TURN_MS / TRACK_TURN_BOOST。 */
 #define TRACK_SPIN_SPEED        1500
-#define TRACK_SEARCH_SPEED      1300
+#define TRACK_SEARCH_SPEED      2000
 #define TRACK_GAP_SPEED         1500
 #define TRACK_RING_BIAS         650
 #define TRACK_SHARP_STRAIGHT_SPEED 900
@@ -127,7 +127,7 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 #define TRACK_SEARCH_TIMEOUT_MS 3000u
 
 /* 强转超时：直角/折线最多转这么久。超时说明线真的没了，转去找线。 */
-#define TRACK_SHARP_TIMEOUT_MS  1700u
+#define TRACK_SHARP_TIMEOUT_MS  2300u
 
 /* 转弯前先**直行一小段**多久（Sharp_Straight 用的时长）。
    刚识别到直角时车头还压着拐角，先直行把车头冲出路口再原地转，
@@ -248,7 +248,7 @@ static uint8_t  s_cand;             /* 正在被消抖确认的候选值        
 static uint8_t  s_candCount;
 
 static int16_t  s_error;            /* 最近一次偏差                     */
-static int16_t  s_lastError;
+static int16_t  s_lastError;        /* 丢线前那一拍的偏差               */
 
 static uint8_t  s_lastSide;         /* 最后压线的一侧：0=左 1=右        */
 static uint8_t  s_turnDir;          /* 强转方向：0=左 1=右              */
