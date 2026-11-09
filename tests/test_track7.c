@@ -78,6 +78,9 @@ static void launch(uint8_t startMask, uint8_t ringOn)
     fake_sensor_set(startMask);
     step_ms(20u);                   /* 让消抖器认可 */
     Track_Start();
+    fake_sensor_set(0x07u);         /* 压一下直角图形（S1-S3）：结束出发段 */
+    step_ms(20u);
+    fake_sensor_set(startMask);     /* 回到正式测试的图形 */
     step_ms(20u);
 }
 
@@ -306,7 +309,8 @@ static void test_lap_still_works(void)
     Track_Start();
     step_ms(20u);
 
-    drive_with(M_CEN, 6000u);       /* 跑过 TRACK_LAP_MIN_MS */
+    drive_with(0x07u, 40u);         /* 第一个路口（直角图形）：结束出发段 */
+    drive_with(M_CEN, Track_LapMinMs() + 2000u);   /* 跑过最短圈时 */
     drive_with(M_NONE, 200u);       /* 压过起跑线（现场实测读成全白） */
     expect(Track_LapsDone() == 1u, "one lap counted with 7 sensors");
     expect(Track_State() == TRACK_ST_FINISH, "stops after the lap");
@@ -603,6 +607,30 @@ static void test_corner_no_debounce(void)
            "a plain 1-sensor reading still waits for the debouncer");
 }
 
+/* 直线冲刺窗：新一圈开始后 9~13 秒内，直线基础速度额外 +600，
+   窗口外保持设置值不变（每圈按 s_startMs 自动重新计时）。 */
+static void test_straight_boost(void)
+{
+    printf("\n--- S. 直线冲刺窗：新一圈 10~11.5s 速度 +1100 -----------------\n");
+
+    launch(M_CEN, 0u);               /* 基础速度 900 */
+
+    /* 窗口之前：设置的基础速度 900（现场冲刺窗 = 10~11.5s，+1100） */
+    drive_with(M_CEN, 100u);
+    expect(Motor_GetLeft() == 900 && Motor_GetRight() == 900,
+           "before 10 s -> base speed 900");
+
+    /* 进入 10~11.5s 窗口：900 + 1100 = 2000 */
+    drive_with(M_CEN, 10000u);
+    expect(Motor_GetLeft() == 2000 && Motor_GetRight() == 2000,
+           "inside the 10..11.5 s window -> 900 + 1100 = 2000");
+
+    /* 窗口过后：恢复设置速度 */
+    drive_with(M_CEN, 2500u);
+    expect(Motor_GetLeft() == 900 && Motor_GetRight() == 900,
+           "after 11.5 s -> back to 900");
+}
+
 static void test_oled_layout(void)
 {
     const uint8_t *fb;
@@ -649,6 +677,7 @@ int main(void)
     test_straddling_pairs();
     test_right_angle();
     test_corner_no_debounce();
+    test_straight_boost();
     test_oled_layout();
 
     printf("\n===============================================================\n");

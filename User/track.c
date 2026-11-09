@@ -54,15 +54,23 @@
 #define TRACK_D_FILTER_DEN      (1u << TRACK_D_FILTER_SHIFT)
 
 /* 基础速度（原始 PWM 值，满量程 MOTOR_PWM_MAX = 7199）。
-   当前调成"慢速"：900 大约 12.5% 占空比，方便盯着屏幕看传感器和
-   状态的变化，出问题也来得及反应。
-   （先前试过 700，太接近这类减速电机的起步下限，容易起步发抖/原地不动，
-   所以抬到 900。再慢就要先确认车还能不能动。）
+   默认 1200（约 17% 占空比，按现场要求从 900 调高）。
    下面这张表是巡线页按 K3 能现场切的四个档位，不用重新编译烧录。
    默认值一定要是表里的一项，否则第一次按 K3 会直接跳到表头那一档。 */
 #define TRACK_SPEED_DEFAULT     900u
 #define TRACK_SPEED_MIN         400u
 #define TRACK_SPEED_MAX         3600u
+
+/* 直线冲刺窗：新的一圈开始（发车 / 每圈压过起跑线重新计时）之后
+   9~13 秒内，直线巡线的基础速度额外 +600（比如 900 -> 1500）。
+   其它时间、其它元素的速度全部保持设置不变。
+   计时基准是 s_startMs（本圈起点时刻），每圈自动重新开始。 */
+#define TRACK_BOOST_START_1_MS    10000u
+// #define TRACK_BOOST_START_2_MS    23500u
+#define TRACK_BOOST_END_1_MS      11500u
+// #define TRACK_BOOST_END_2_MS      26000u
+#define TRACK_BOOST_ADD         1100u
+// #define TRACK_BOOST_ADD_2         1100u
 
 static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
 #define TRACK_SPEED_LEVELS      (sizeof(s_speedLevels) / sizeof(s_speedLevels[0]))
@@ -141,7 +149,7 @@ static const uint16_t s_speedLevels[] = { 700u, 900u, 1200u, 1500u };
    （都是四路全黑）。用一个"最短圈时"把它们滤掉 —— 真的跑完一圈至
    少要这么久，中间的十字不可能隔这么近。
    调法：量一下自己的赛道跑一圈要几秒，填一个明显小于它的值。 */
-#define TRACK_LAP_MIN_MS        5000u
+#define TRACK_LAP_MIN_MS        59300u
 
 /* ---- 圆环 ---- */
 
@@ -660,12 +668,35 @@ static void Track_OnLapDone(uint32_t now)
    回到中间之后最多再修 TRACK_TURN_MS 就收手。
 
    方向约定：线偏左 -> 右轮快 -> 车头往左摆（追着线走）。 */
+/* 当前这拍的直线基础速度：新一圈 9~13 秒内额外 +600（冲刺窗），
+   其它时间就是设置的基础速度。封顶 TRACK_SPEED_MAX。 */
+static uint16_t CurrentBaseSpeed(void)
+{
+    uint32_t inLap = (uint32_t)(Tick_Ms() - s_startMs);
+
+    if ((inLap >= TRACK_BOOST_START_1_MS) && (inLap < TRACK_BOOST_END_1_MS)) {
+        uint32_t v = (uint32_t)s_baseSpeed + TRACK_BOOST_ADD;
+        if (v > TRACK_SPEED_MAX) {
+            v = TRACK_SPEED_MAX;
+        }
+        return (uint16_t)v;
+    }
+    // if ((inLap >= TRACK_BOOST_START_2_MS) && (inLap < TRACK_BOOST_END_2_MS)) {
+    //     uint32_t v = (uint32_t)s_baseSpeed + TRACK_BOOST_ADD_2;
+    //     if (v > TRACK_SPEED_MAX) {
+    //         v = TRACK_SPEED_MAX;
+    //     }
+    //     return (uint16_t)v;
+    // }
+    return s_baseSpeed;
+}
+
 static void Control_Turn(uint8_t mask)
 {
     uint32_t now  = Tick_Ms();
     int8_t   lean = MaskLean(mask);        /* -1 偏左, +1 偏右, 0 正中 */
-    int32_t  left  = (int32_t)s_baseSpeed;
-    int32_t  right = (int32_t)s_baseSpeed;
+    int32_t  left  = (int32_t)CurrentBaseSpeed();
+    int32_t  right = (int32_t)CurrentBaseSpeed();
 
     /* 丢线之后判"刚才车正不正"要用它，跟用什么控制律无关，照旧维护 */
     s_lastError = s_error;
@@ -900,6 +931,28 @@ void Track_Tick(void)
     }
 #endif
 
+    /* ---------------- 出发阶段的终点：第一个路口/元素 ---------------- */
+    /* 按下 K1 后先直线跑一段（LAUNCH），压到第一个路口才开始计第一圈、
+       开始计时 —— 起跑前的直线段不算圈内时间。
+       终点判据是**任意一个路口/元素**：T 字（圆环进出那两套判据）、
+       直角（Sharp_EntryDir）或十字（全黑）。赛道上的第一个就是那个
+       T 字路口；判得宽一点，单元素调试（4d）时车一进元素就能正常反应。 */
+    if (s_state == TRACK_ST_LAUNCH) {
+        uint8_t isJunction = (uint8_t)(
+            (Ring_IsEntry(mask) != 0u) || (Ring_IsExit(mask) != 0u)
+            || (Sharp_EntryDir(mask) != 0xFFu) || (allBlack != 0u));
+
+        if (isJunction != 0u) {
+            s_startMs    = now;   /* 第一圈从这里开始计时 */
+            s_lastMarkMs = now;
+            s_lapsDone   = 0u;
+            s_markArmed  = 0u;
+            EnterState(TRACK_ST_RUN);
+            /* 不 return：同一个 tick 落到下面的状态机，把这个元素直接交给
+               正常判据处理（T 字 -> 圆环/继续循线，直角 -> 强转）。 */
+        }
+    }
+
     /* ---------------- 全局优先事件：十字 / 起跑线 ---------------- */
     /* 十字路口和起跑线的传感器特征完全一样，处理办法也一样：
        先判要不要计圈，然后锁定直行冲过去。 */
@@ -927,6 +980,12 @@ void Track_Tick(void)
     /* ---------------- 状态机 ---------------- */
 
     switch (s_state) {
+    case TRACK_ST_LAUNCH:
+        /* 出发阶段：按下 K1 后直线跑向第一个路口，
+           别的什么都不管。压到路口后由上面的"出发终点"事件接管。 */
+        DriveForward((uint16_t)s_baseSpeed);
+        break;
+
     case TRACK_ST_CROSS:
         Control_Cross(now);
         break;
@@ -1049,7 +1108,8 @@ void Track_Start(void)
     s_turnSide   = 0xFFu;
     s_turnUntilMs = 0u;
 
-    EnterState(TRACK_ST_RUN);
+    /* 出发阶段：先直线跑向第一个路口，第一圈从那里开始计时 */
+    EnterState(TRACK_ST_LAUNCH);
 }
 
 void Track_Stop(void)
@@ -1120,8 +1180,15 @@ void Track_CycleLaps(void)
 void    Track_SetLineMark(uint8_t on)   { s_lineMark = (uint8_t)(on != 0u); }
 uint8_t Track_GetLineMark(void)         { return s_lineMark; }
 
+/* 最短圈时（编译期宏），给测试/上位机读取用 */
+uint32_t Track_LapMinMs(void)           { return TRACK_LAP_MIN_MS; }
+
 uint32_t Track_ElapsedMs(void)
 {
+    /* 出发阶段（还没到第一个 T 字路口）：计时尚未开始，显示 0 */
+    if (s_state == TRACK_ST_LAUNCH) {
+        return 0u;
+    }
     if (Track_IsRunning() != 0u) {
         return (uint32_t)(Tick_Ms() - s_startMs);
     }
@@ -1148,6 +1215,7 @@ uint8_t  Track_LapsDone(void)   { return s_lapsDone; }
    这些汉字都在 oled_font.h 的字库里，加字方法见 README 第 7 章。 */
 
 static const uint16_t T_IDLE[]   = { CN_JIU, CN_XU, 0 };                /* 就绪 */
+static const uint16_t T_LAUNCH[] = { CN_FA, CN_CHE, 0 };                 /* 发车 */
 static const uint16_t T_RUN[]    = { CN_YUN, CN_XING, 0 };              /* 运行 */
 static const uint16_t T_CROSS[]  = { CN_SHI5, CN_ZI, 0 };               /* 十字 */
 static const uint16_t T_SHARP[]  = { CN_ZHUAN, CN_WAN, 0 };             /* 转弯 */
@@ -1159,6 +1227,7 @@ static const uint16_t T_FINISH[] = { CN_WAN2, CN_CHENG, 0 };            /* 完�
 const uint16_t *Track_StateText(void)
 {
     switch (s_state) {
+    case TRACK_ST_LAUNCH: return T_LAUNCH;
     case TRACK_ST_RUN:    return T_RUN;
     case TRACK_ST_CROSS:  return T_CROSS;
     case TRACK_ST_SHARP:  return T_SHARP;
@@ -1174,6 +1243,7 @@ const uint16_t *Track_StateText(void)
 const char *Track_StateTag(void)
 {
     switch (s_state) {
+    case TRACK_ST_LAUNCH: return "LAUNCH";
     case TRACK_ST_RUN:    return "RUN";
     case TRACK_ST_CROSS:  return "CROSS";
     case TRACK_ST_SHARP:  return "SHARP";
@@ -1237,13 +1307,13 @@ void Track_Init(void)
     s_elapsedMs  = 0u;
     s_lastLapMs  = 0u;
     s_lastMarkMs = 0u;
-    s_laps       = 1u;
+    s_laps       = 2u;      /* 上电默认跑 2 圈（题目 4c）          */
     s_lapsDone   = 0u;
     s_markArmed  = 0u;
     s_baseSpeed  = TRACK_SPEED_DEFAULT;
-    s_ringEnable = 1u;
+    s_ringEnable = 0u;      /* 上电默认圆环处理**关**              */
     s_lineMark   = 1u;
-    /* 上电默认"完成不停车"：圈数只用来计时和报圈，不会把车停下来，
-       所以一按发车就会一直跑下去。菜单里的"完成停车"仍然能改回开。 */
-    s_finishStop = 0u;
+    /* 上电默认"完成自动停车"**开**：跑满设定圈数（默认 2 圈）就停。
+       菜单里的「巡线设置」仍然能改。 */
+    s_finishStop = 1u;
 }

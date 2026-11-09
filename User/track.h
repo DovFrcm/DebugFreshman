@@ -141,6 +141,7 @@ extern const SensorPin g_trackSensorPins[TRACK_SENSOR_COUNT];
 
 typedef enum {
     TRACK_ST_IDLE = 0,      /* 没发车，电机停着，只显示传感器          */
+    TRACK_ST_LAUNCH,        /* 出发阶段：K1 后直线跑向第一个 T 字路口    */
     TRACK_ST_RUN,           /* 正常循迹（简单转向）                    */
     TRACK_ST_CROSS,         /* 压在十字/起跑线上，锁定直行通过         */
     TRACK_ST_SHARP,         /* 强转中（直角 / 折线 / 圆环入口）        */
@@ -211,6 +212,7 @@ uint8_t     Track_GetRingEnable(void);
 
 void        Track_SetLineMark(uint8_t on);      /* 起跑线(四路全黑)计圈，默认开 */
 uint8_t     Track_GetLineMark(void);
+uint32_t    Track_LapMinMs(void);               /* 最短圈时（编译期宏），测试/上位机用 */
 
 /* ---- 计时 ---- */
 

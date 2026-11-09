@@ -1,2 +1,4 @@
 Load "E:\\Stm32\\DebugFreshman\\DebugFreshman\\Objects\\1.axf" 
-Erase Done.Programming Done.Verify OK.Flash Load finished at 14:51:20
+Erase Failed!ST-LINK USB communication error
+Error: Flash Download failed  -  "Cortex-M3"
+Flash Load finished at 18:44:02

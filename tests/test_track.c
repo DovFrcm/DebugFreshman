@@ -125,7 +125,10 @@ static void reset_and_launch(uint8_t startMask)
     fake_sensor_set(startMask);
     step_ms(20u);                   /* 让消抖器认可这个初始值 */
     Track_Start();
+    fake_sensor_set(0x0Fu);         /* 压一下十字：结束出发段（直行通过，不带修正脉冲） */
     step_ms(20u);
+    fake_sensor_set(startMask);     /* 回到正式测试的图形，等 CROSS 走完交还巡线 */
+    step_ms(100u);
 }
 
 /* ================================================================== */
@@ -413,8 +416,19 @@ static void test_laps_one(void)
     expect(Track_IsRunning() != 0u, "K1 on the trace page starts the car");
     expect(fake_beep_pulses == 1u, "requirement 4b: the buzzer beeps ONCE at launch");
 
-    /* 跑一会儿（要超过 TRACK_LAP_MIN_MS，真赛道上这段是整整一圈） */
-    drive_with(0x06u, 6000u);
+    /* 出发阶段：直线跑向第一个路口，计时还没开始 */
+    drive_with(0x06u, 1000u);
+    expect(Track_State() == TRACK_ST_LAUNCH,
+           "launch phase: driving straight to the first junction");
+    expect(Track_ElapsedMs() == 0u, "the lap timer has not started yet");
+
+    /* 压上第一个 T 字路口：第一圈从这里开始计时 */
+    drive_with(0x07u, 40u);
+    expect(Track_State() == TRACK_ST_RUN, "first T-junction -> lap 1 starts");
+
+    /* 跑一会儿（要超过 TRACK_LAP_MIN_MS，真赛道上这段是整整一圈；
+       时长跟着 Track_LapMinMs() 走，现场改了宏这里自动适应） */
+    drive_with(0x06u, Track_LapMinMs() + 2000u);
     expect(Track_IsRunning() != 0u, "still running mid-lap");
     expect(fake_beep_pulses == 1u, "no extra beeps during the lap");
     expect(Track_ElapsedMs() >= 6000u, "the lap timer is running");
@@ -475,7 +489,12 @@ static void test_lap_beep_timing(void)
     step_ms(20u);
     fake_beep_reset();
     Track_Start();
-    step_ms(6000u);
+    step_ms(1000u);
+
+    fake_sensor_set(0x07u);     /* 第一个 T 字路口：结束出发段，开始计圈 */
+    step_ms(20u);
+    fake_sensor_set(0x06u);     /* 离开横线，跑一圈（超过 LAP_MIN） */
+    step_ms(Track_LapMinMs() + 2000u);
 
     fake_sensor_set(0x0Fu);     /* 压上起跑线：计圈 + 响铃 + 进 CROSS */
     /* 传感器消抖要 3 拍（约 6 ms），所以这里必须走够时间，
@@ -517,8 +536,12 @@ static void test_laps_two(void)
     expect(Track_GetLaps() == 2u, "two laps configured");
     expect(fake_beep_pulses == 1u, "beep on launch");
 
+    /* 出发 -> 第一个 T 字路口开始计第一圈 */
+    drive_with(0x06u, 1000u);
+    drive_with(0x07u, 40u);
+
     /* ---- 第一圈 ---- */
-    drive_with(0x06u, 6000u);
+    drive_with(0x06u, Track_LapMinMs() + 2000u);
     drive_with(0x0Fu, 200u);
 
     expect(Track_LapsDone() == 1u, "requirement 4c: first lap recognised");
@@ -529,7 +552,7 @@ static void test_laps_two(void)
 
     /* ---- 第二圈 ---- */
     drive_with(0x00u, 200u);        /* 先离开起跑线 */
-    drive_with(0x06u, 6000u);
+    drive_with(0x06u, Track_LapMinMs() + 2000u);
     drive_with(0x0Fu, 200u);
 
     expect(Track_LapsDone() == 2u, "requirement 4c: second lap counted");
@@ -545,22 +568,25 @@ static void test_laps_two(void)
 }
 
 /* ------------------------------------------------------------------
- * 上电默认：s_finishStop = 0。
- * 圈数只用来计时和报圈，跑满设定圈数**不停车**，一直跑下去。
- * 这一条守的是"不做任何设置、一按发车就能连续跑"的行为；
- * 菜单里的「巡线设置 → 完成停车」仍然可以改回开（题目 4b/4c 要它开）。
+ * 上电默认（2026-10 起）：完成停车**开**、圈数 **2**、圆环**关**。
+ * 这一条守的是"用户把自动停车关掉后"的行为：圈数只用来计时和报圈，
+ * 跑满设定圈数**不停车**，一直跑下去。
  * ------------------------------------------------------------------ */
 static void test_run_forever(void)
 {
-    printf("\n--- I2. 上电默认：跑满圈数不停车，一直跑 ----------------------\n");
+    printf("\n--- I2. 关掉自动停车后：跑满圈数不停车，一直跑 ----------------\n");
 
     enter_trace_page();
 
     Track_Init();                   /* 回到上电初值，不作任何额外设置 */
-    expect(Track_GetFinishStop() == 0u, "power-on default: finish-stop is OFF");
-    expect(Track_GetLaps() == 1u, "power-on default: 1 lap is configured");
+    expect(Track_GetFinishStop() == 1u, "power-on default: finish-stop is ON");
+    expect(Track_GetLaps() == 2u, "power-on default: 2 laps are configured");
+    expect(Track_GetRingEnable() == 0u,
+           "power-on default: roundabout handling is OFF");
 
     Track_SetBaseSpeed(1800u);
+    Track_SetLaps(9u);              /* 模拟用户关掉自动停车：圈数放大，永远跑不完 */
+    Track_SetFinishStop(0u);
     Track_SetRingEnable(0u);
     Track_Stop();
     fake_beep_reset();
@@ -568,7 +594,9 @@ static void test_run_forever(void)
     step_ms(20u);
 
     Menu_HandleKey(KEY_1);          /* K1 发车 */
-    drive_with(0x06u, 6000u);
+    drive_with(0x06u, 1000u);       /* 出发直线段 */
+    drive_with(0x07u, 40u);         /* 第一个 T 字路口：开始计圈 */
+    drive_with(0x06u, Track_LapMinMs() + 2000u);
     drive_with(0x0Fu, 200u);        /* 过起跑线：算第 1 圈 */
 
     expect(Track_LapsDone() == 1u, "lap 1 counted");
@@ -577,7 +605,7 @@ static void test_run_forever(void)
 
     /* 再跑一圈，还是不停 */
     drive_with(0x00u, 200u);
-    drive_with(0x06u, 6000u);
+    drive_with(0x06u, Track_LapMinMs() + 2000u);
     drive_with(0x0Fu, 200u);
 
     expect(Track_LapsDone() == 2u, "lap 2 counted");
@@ -712,6 +740,9 @@ static void test_screens(void)
     fake_sensor_set(0x06u);
     step_ms(20u);
     Menu_HandleKey(KEY_1);
+    fake_sensor_set(0x07u);         /* 第一个 T 字路口：结束出发段，开始计时 */
+    step_ms(20u);
+    fake_sensor_set(0x06u);
     step_ms(1500u);
     fake_sensor_set(0x03u);         /* 线偏到左边，车正在左转 */
     step_ms(40u);
